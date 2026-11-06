@@ -171,6 +171,77 @@ button:disabled {
   margin-bottom: 7px;
 }
 
+.citation-status {
+  margin-top: 14px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  background: #eaf7f1;
+  color: #176b45;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.citation-status.partial {
+  background: #fff7e6;
+  color: #8a5a00;
+}
+
+.citation-status.unverified {
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.citation-status.not_applicable {
+  background: #f2f4f7;
+  color: #475467;
+}
+
+.message-warnings {
+  margin-top: 10px;
+  padding: 11px 13px;
+  border: 1px solid #fecdca;
+  border-radius: 7px;
+  background: #fff8f7;
+  color: #8f2118;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.message-warnings ul {
+  padding-left: 20px;
+  margin-top: 5px;
+}
+
+.source-chunk-list li {
+  margin-bottom: 12px;
+}
+
+.source-chunk-index {
+  display: block;
+  color: #667085;
+  font-size: 12px;
+}
+
+.source-chunk-list details {
+  margin-top: 5px;
+}
+
+.source-chunk-list summary {
+  color: #087e8b;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.source-excerpt {
+  margin-top: 6px;
+  padding: 9px;
+  border-radius: 6px;
+  background: #eef3f5;
+  color: #344054;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
 .message-loading {
   opacity: 0.75;
 }

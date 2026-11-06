@@ -60,4 +60,6 @@ def ask(request: QuestionRequest):
         "question": question,
         "answer": result["answer"],
         "sources": result["sources"],
+        "warnings": result.get("warnings", []),
+        "validation_status": result.get("validation_status", "not_applicable"),
     }

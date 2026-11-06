@@ -42,6 +42,8 @@ function App() {
           role: "assistant",
           content: data.answer,
           sources: data.sources || [],
+          warnings: data.warnings || [],
+          validationStatus: data.validation_status || "not_applicable",
         },
       ]);
     } catch (err) {
@@ -84,20 +86,57 @@ function App() {
               <p>{message.content}</p>
 
               {message.role === "assistant" && (
-                <div className="message-sources">
-                  <h4>Source Documents</h4>
-                  {message.sources?.length > 0 ? (
-                    <ul>
-                      {message.sources.map((source, sourceIndex) => (
-                        <li key={`${source.filename}-${sourceIndex}`}>
-                          {source.filename}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>No supporting documents were retrieved.</p>
+                <>
+                  <div className={`citation-status ${message.validationStatus}`}>
+                    {message.validationStatus === "verified" &&
+                      "Second-pass citation check: all displayed claims passed."}
+                    {message.validationStatus === "partial" &&
+                      "Second-pass citation check: only supported claims are shown."}
+                    {message.validationStatus === "unverified" &&
+                      "Second-pass citation check could not verify an answer."}
+                    {message.validationStatus === "not_applicable" &&
+                      "Citation check not applicable."}
+                  </div>
+
+                  {message.warnings?.length > 0 && (
+                    <div className="message-warnings" role="note">
+                      <strong>Review notes</strong>
+                      <ul>
+                        {message.warnings.map((warning, warningIndex) => (
+                          <li key={warningIndex}>{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
-                </div>
+
+                  <div className="message-sources">
+                    <h4>Cited Source Chunks</h4>
+                    {message.sources?.length > 0 ? (
+                      <ul className="source-chunk-list">
+                        {message.sources.map((source, sourceIndex) => (
+                          <li key={`${source.source_id || source.filename}-${sourceIndex}`}>
+                            <strong>
+                              [{source.source_id || `S${sourceIndex + 1}`}] {source.filename}
+                            </strong>
+                            {source.chunk_index !== undefined && (
+                              <span className="source-chunk-index">
+                                Chunk index {source.chunk_index}
+                              </span>
+                            )}
+                            {source.text && (
+                              <details>
+                                <summary>View cited text</summary>
+                                <p className="source-excerpt">{source.text}</p>
+                              </details>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>No verified source chunks were cited.</p>
+                    )}
+                  </div>
+                </>
               )}
             </article>
           ))}
