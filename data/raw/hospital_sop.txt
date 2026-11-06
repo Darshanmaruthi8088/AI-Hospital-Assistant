@@ -1,0 +1,13 @@
+﻿PATIENT REGISTRATION AND ADMISSION SOP
+
+Every new patient must complete the hospital registration process.
+
+Patients must provide their name, age, contact number, and address.
+
+After registration, the patient receives a unique hospital registration number.
+
+Emergency patients must receive immediate attention according to hospital emergency procedures.
+
+Admission requires approval from the authorized medical officer.
+
+The admission desk must maintain accurate patient admission records.

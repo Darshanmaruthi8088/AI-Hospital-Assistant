@@ -1,0 +1,13 @@
+﻿HOSPITAL STAFF DUTY ROSTER
+
+Morning shift: 8:00 AM to 2:00 PM.
+
+Evening shift: 2:00 PM to 8:00 PM.
+
+Night shift: 8:00 PM to 8:00 AM.
+
+The duty supervisor is responsible for coordinating staff assignments.
+
+Staff members must inform the supervisor before taking leave.
+
+Shift changes must be approved by the department supervisor.
