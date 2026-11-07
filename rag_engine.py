@@ -288,6 +288,9 @@ Answer:"""
         )
 
     claims, citation_warnings = _extract_claims(generated_answer, sources_by_id)
+    print("\n===== EXTRACTED CLAIMS =====")
+    print(claims)
+    print("Extraction warnings:", citation_warnings)
     if not claims:
         return _result(
             UNSUPPORTED_ANSWER,
@@ -297,6 +300,8 @@ Answer:"""
 
     try:
         verification = _verify_claims(claims, sources_by_id)
+        print("\n===== VERIFICATION RESULTS =====")
+        print(verification)
     except Exception:
         return _result(
             UNSUPPORTED_ANSWER,
