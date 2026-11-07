@@ -1,0 +1,177 @@
+import { useState } from "react";
+import "./App.css";
+
+function App() {
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSend = async () => {
+    const submittedQuestion = question.trim();
+    if (!submittedQuestion || loading) return;
+
+    setLoading(true);
+    setQuestion("");
+    setError("");
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      { role: "user", content: submittedQuestion },
+    ]);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/ask", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: submittedQuestion,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Something went wrong.");
+      }
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content: data.answer,
+          sources: data.sources || [],
+          warnings: data.warnings || [],
+          validationStatus: data.validation_status || "not_applicable",
+        },
+      ]);
+    } catch (err) {
+      setError(
+        err.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Please check whether FastAPI is running."
+          : err.message
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="app">
+      <header>
+        <h1>AI Hospital Information Assistant</h1>
+        <p>Your intelligent hospital information assistant</p>
+      </header>
+
+      <main className="chat-container">
+        {messages.length === 0 && (
+          <div className="welcome-message">
+            <h2>How can I help you?</h2>
+            <p>
+              Ask questions about hospital SOPs, lab rules, and duty rosters.
+            </p>
+          </div>
+        )}
+
+        <div className="message-list" aria-live="polite">
+          {messages.map((message, index) => (
+            <article
+              className={`message ${message.role}`}
+              key={`${message.role}-${index}`}
+            >
+              <span className="message-label">
+                {message.role === "user" ? "You" : "Assistant"}
+              </span>
+              <p>{message.content}</p>
+
+              {message.role === "assistant" && (
+                <>
+                  <div className={`citation-status ${message.validationStatus}`}>
+                    {message.validationStatus === "verified" &&
+                      "Second-pass citation check: all displayed claims passed."}
+                    {message.validationStatus === "partial" &&
+                      "Second-pass citation check: only supported claims are shown."}
+                    {message.validationStatus === "unverified" &&
+                      "Second-pass citation check could not verify an answer."}
+                    {message.validationStatus === "not_applicable" &&
+                      "Citation check not applicable."}
+                  </div>
+
+                  {message.warnings?.length > 0 && (
+                    <div className="message-warnings" role="note">
+                      <strong>Review notes</strong>
+                      <ul>
+                        {message.warnings.map((warning, warningIndex) => (
+                          <li key={warningIndex}>{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="message-sources">
+                    <h4>Cited Source Chunks</h4>
+                    {message.sources?.length > 0 ? (
+                      <ul className="source-chunk-list">
+                        {message.sources.map((source, sourceIndex) => (
+                          <li key={`${source.source_id || source.filename}-${sourceIndex}`}>
+                            <strong>
+                              [{source.source_id || `S${sourceIndex + 1}`}] {source.filename}
+                            </strong>
+                            {source.chunk_index !== undefined && (
+                              <span className="source-chunk-index">
+                                Chunk index {source.chunk_index}
+                              </span>
+                            )}
+                            {source.text && (
+                              <details>
+                                <summary>View cited text</summary>
+                                <p className="source-excerpt">{source.text}</p>
+                              </details>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>No verified source chunks were cited.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </article>
+          ))}
+
+          {loading && (
+            <article className="message assistant message-loading">
+              <span className="message-label">Assistant</span>
+              <p>Processing your question...</p>
+            </article>
+          )}
+        </div>
+
+        <div className="input-area">
+          <textarea
+            placeholder="Type your hospital-related question..."
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+          />
+
+          <button
+            onClick={handleSend}
+            disabled={!question.trim() || loading}
+          >
+            {loading ? "Processing..." : "Send"}
+          </button>
+        </div>
+
+        {error && (
+          <div className="error-message">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;
