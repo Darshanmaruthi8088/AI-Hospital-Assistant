@@ -136,6 +136,17 @@ def main():
 
         try:
             result = answer_question(test["question"])
+            print("  Validation status:", result.get("validation_status"))
+            print("  Validation warnings:", result.get("warnings", []))
+            print("  Final answer:", repr(result.get("answer", "")))
+            print(
+                "  Verified source chunks:",
+                [
+                    f"{source.get('source_id')} - {source.get('filename')} "
+                    f"(chunk {source.get('chunk_index')})"
+                    for source in result.get("sources", [])
+                ],
+            )
             metrics = evaluate_case(test, result)
         except Exception as error:
             metrics = {
