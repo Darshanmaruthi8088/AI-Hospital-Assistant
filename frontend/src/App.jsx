@@ -8,6 +8,176 @@ function App() {
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [patientError, setPatientError] = useState("");
   const [patientSearch, setPatientSearch] = useState("");
+  const [showAddPatient, setShowAddPatient] = useState(false);
+  const [registeringPatient, setRegisteringPatient] = useState(false);
+  const [registrationMessage, setRegistrationMessage] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [patientDetailsLoading, setPatientDetailsLoading] = useState(false);
+  const [patientDetailsError, setPatientDetailsError] = useState("");
+  const [editingPatient, setEditingPatient] = useState(false);
+  const [savingPatient, setSavingPatient] = useState(false);
+
+  const handleViewPatient = async (patientId) => {
+    setPatientDetailsLoading(true);
+    setPatientDetailsError("");
+    setSelectedPatient(null);
+    setEditingPatient(false);
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/patients/${encodeURIComponent(patientId)}`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail || "Unable to retrieve patient details."
+        );
+      }
+
+      setSelectedPatient(data);
+    } catch (err) {
+      setPatientDetailsError(err.message);
+    } finally {
+      setPatientDetailsLoading(false);
+    }
+  };
+
+  const handleUpdatePatient = async (e) => {
+    e.preventDefault();
+
+    if (!selectedPatient) return;
+
+    setSavingPatient(true);
+    setPatientDetailsError("");
+
+    try {
+      const formData = new FormData(e.currentTarget);
+      const patientData = Object.fromEntries(formData.entries());
+
+      // Convert empty date and age fields to null.
+      patientData.Date_of_Birth =
+        patientData.Date_of_Birth || null;
+
+      patientData.Registration_Date =
+        patientData.Registration_Date || null;
+
+      patientData.Age =
+        patientData.Age === "" ? null : Number(patientData.Age);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/patients/${encodeURIComponent(selectedPatient.Patient_ID)}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(patientData),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          Array.isArray(result.detail)
+            ? result.detail.map((item) => item.msg).join(", ")
+            : result.detail || "Patient update failed."
+        );
+      }
+
+      setSelectedPatient(result);
+      setEditingPatient(false);
+
+      // Refresh the patient table.
+      const patientsResponse = await fetch(
+        "http://127.0.0.1:8000/patients"
+      );
+
+      if (!patientsResponse.ok) {
+        throw new Error(
+          "Patient updated, but the patient list could not be refreshed."
+        );
+      }
+
+      const updatedPatients = await patientsResponse.json();
+      setPatients(updatedPatients);
+    } catch (err) {
+      setPatientDetailsError(err.message);
+    } finally {
+      setSavingPatient(false);
+    }
+  };
+
+  const handleRegisterPatient = async (e) => {
+    e.preventDefault();
+
+    setRegisteringPatient(true);
+    setRegistrationMessage("");
+
+    try {
+      const form = e.currentTarget;
+      const formData = new FormData(form);
+      const patientData = {};
+
+      for (const [key, value] of formData.entries()) {
+        const trimmedValue = value.trim();
+
+        // Skip empty optional fields
+        if (trimmedValue === "") continue;
+
+        patientData[key] = trimmedValue;
+      }
+
+      // Convert age from string to number
+      if (patientData.Age !== undefined) {
+        patientData.Age = Number(patientData.Age);
+      }
+
+      const response = await fetch("http://127.0.0.1:8000/patients", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(patientData),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        const errorDetail = Array.isArray(result.detail)
+          ? result.detail.map((item) => item.msg).join(", ")
+          : result.detail || "Patient registration failed.";
+
+        throw new Error(errorDetail);
+      }
+
+      // Refresh the patient list
+      const patientsResponse = await fetch("http://127.0.0.1:8000/patients");
+
+      if (!patientsResponse.ok) {
+        throw new Error(
+          "Patient registered, but the records list could not be refreshed. Please reload the page."
+        );
+      }
+
+      const updatedPatients = await patientsResponse.json();
+      setPatients(updatedPatients);
+
+      form.reset();
+      setShowAddPatient(false);
+
+      setRegistrationMessage(
+        `Patient registered successfully! Patient ID: ${result.Patient_ID}`
+      );
+    } catch (err) {
+      setRegistrationMessage(err.message);
+    } finally {
+      setRegisteringPatient(false);
+    }
+  };
+
   const filteredPatients = patients.filter((patient) => {
     const search = patientSearch.trim().toLowerCase();
 
@@ -263,7 +433,218 @@ function App() {
             <div className="patient-count">
               Total Patients: <strong>{patients.length}</strong>
             </div>
+
+            <button
+              className="add-patient-button"
+              onClick={() => {
+                setShowAddPatient(!showAddPatient);
+                setRegistrationMessage("");
+              }}
+            >
+              + Add New Patient
+            </button>
           </div>
+
+          {registrationMessage && (
+            <div
+              className={
+                registrationMessage.startsWith("Patient registered successfully")
+                  ? "registration-success"
+                  : "registration-error"
+              }
+            >
+              {registrationMessage}
+            </div>
+          )}
+
+          {patientDetailsLoading && (
+            <div className="patient-details-container">
+              Loading patient details...
+            </div>
+          )}
+
+          {patientDetailsError && (
+            <div className="registration-error">
+              {patientDetailsError}
+            </div>
+          )}
+
+          {selectedPatient && !patientDetailsLoading && (
+            <div className="patient-details-container">
+              <div className="patient-details-heading">
+                <div>
+                  <span className="dashboard-tag">PATIENT INFORMATION</span>
+                  <h2>{selectedPatient.Full_Name}</h2>
+                  <p>Patient ID: {selectedPatient.Patient_ID}</p>
+                </div>
+
+                <div className="patient-details-actions">
+                  <button
+                    type="button"
+                    onClick={() => setEditingPatient(true)}
+                  >
+                    Edit Patient
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPatient(null);
+                      setEditingPatient(false);
+                      setPatientDetailsError("");
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="patient-details-grid">
+                {[
+                  ["Date of Birth", "Date_of_Birth"],
+                  ["Age", "Age"],
+                  ["Gender", "Gender"],
+                  ["Contact Number", "Contact_Number"],
+                  ["Address", "Address"],
+                  ["Emergency Contact Name", "Emergency_Contact_Name"],
+                  ["Emergency Contact Number", "Emergency_Contact_Number"],
+                  ["Department", "Department"],
+                  ["Doctor Assigned", "Doctor_Assigned"],
+                  ["Registration Date", "Registration_Date"],
+                  ["Visit Type", "Visit_Type"],
+                  ["Record Status", "Record_Status"],
+                  ["Notes", "Notes"],
+                ].map(([label, field]) => (
+                  <div className="patient-detail-item" key={field}>
+                    <span>{label}</span>
+                    <strong>{selectedPatient[field] || "—"}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showAddPatient && (
+            <div className="patient-form-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>Register New Patient</h2>
+                  <p>Enter the patient's registration details.</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  aria-label="Close registration form"
+                  onClick={() => setShowAddPatient(false)}
+                >
+                  ×
+                </button>
+              </div>
+
+              <form className="patient-form" onSubmit={handleRegisterPatient}>
+                <div className="patient-form-grid">
+                  <label>
+                    Full Name *
+                    <input
+                      type="text"
+                      name="Full_Name"
+                      placeholder="Enter full name"
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    Date of Birth
+                    <input type="date" name="Date_of_Birth" />
+                  </label>
+
+                  <label>
+                    Age
+                    <input type="number" name="Age" min="0" max="150" />
+                  </label>
+
+                  <label>
+                    Gender
+                    <select name="Gender" defaultValue="">
+                      <option value="" disabled>Select gender</option>
+                      <option>Female</option>
+                      <option>Male</option>
+                      <option>Other</option>
+                      <option>Prefer not to say</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Contact Number
+                    <input type="tel" name="Contact_Number" />
+                  </label>
+
+                  <label>
+                    Department
+                    <input type="text" name="Department" />
+                  </label>
+
+                  <label>
+                    Doctor Assigned
+                    <input type="text" name="Doctor_Assigned" />
+                  </label>
+
+                  <label>
+                    Emergency Contact Name
+                    <input type="text" name="Emergency_Contact_Name" />
+                  </label>
+
+                  <label>
+                    Emergency Contact Number
+                    <input type="tel" name="Emergency_Contact_Number" />
+                  </label>
+
+                  <label>
+                    Visit Type
+                    <select name="Visit_Type" defaultValue="OPD">
+                      <option>OPD</option>
+                      <option>IPD</option>
+                      <option>Emergency</option>
+                      <option>Follow-up</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Record Status
+                    <select name="Record_Status" defaultValue="Active">
+                      <option>Active</option>
+                      <option>Discharged</option>
+                      <option>Inactive</option>
+                    </select>
+                  </label>
+
+                  <label className="patient-full-width">
+                    Address
+                    <textarea name="Address" rows="2" />
+                  </label>
+
+                  <label className="patient-full-width">
+                    Notes
+                    <textarea name="Notes" rows="2" />
+                  </label>
+                </div>
+
+                <div className="patient-form-actions">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPatient(false)}
+                  >
+                    Cancel
+                  </button>
+
+                  <button type="submit" disabled={registeringPatient}>
+                    {registeringPatient ? "Registering..." : "Register Patient"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
           {patientsLoading && (
             <p>Loading patient records...</p>
@@ -293,7 +674,15 @@ function App() {
                 <tbody>
                   {filteredPatients.map((patient) => (
                     <tr key={patient.Patient_ID}>
-                      <td>{patient.Patient_ID}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="patient-id-link"
+                          onClick={() => handleViewPatient(patient.Patient_ID)}
+                        >
+                          {patient.Patient_ID}
+                        </button>
+                      </td>
                       <td>{patient.Full_Name}</td>
                       <td>{patient.Age ?? "—"}</td>
                       <td>{patient.Gender || "—"}</td>

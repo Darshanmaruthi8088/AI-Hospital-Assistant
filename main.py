@@ -85,6 +85,32 @@ def create_patient(request: PatientCreateRequest):
         ) from error
 
 
+@app.put("/patients/{patient_id}")
+def update_patient(patient_id: str, request: PatientCreateRequest):
+    try:
+        patient_data = request.dict(exclude_unset=True)
+        updated_patient = patient_store.update_patient(
+            patient_id,
+            patient_data,
+        )
+        if updated_patient is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Patient not found.",
+            )
+        return updated_patient
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Patient record storage is unavailable.",
+        ) from error
+
+
 @app.get("/patients/{patient_id}")
 def get_patient(patient_id: str):
     try:

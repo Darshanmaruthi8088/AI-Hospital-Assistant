@@ -326,6 +326,78 @@ def register_patient(patient_data: dict[str, Any]) -> dict[str, Any]:
             workbook.close()
 
 
+def update_patient(
+    patient_id: str,
+    patient_data: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Update supplied fields for an existing patient without changing its ID."""
+    if not isinstance(patient_data, dict):
+        raise ValueError("Patient data must be a dictionary.")
+    if any(not isinstance(field, str) for field in patient_data):
+        raise ValueError("Patient field names must be strings.")
+
+    unknown_fields = set(patient_data) - EDITABLE_FIELDS
+    if unknown_fields:
+        raise ValueError(f"Unsupported fields: {', '.join(sorted(unknown_fields))}")
+
+    target_id = str(patient_id).strip().casefold()
+    if not target_id:
+        return None
+
+    with _file_lock:
+        workbook, worksheet = _load_sheet()
+        try:
+            target_row = None
+            for row_index in range(2, worksheet.max_row + 1):
+                current_id = worksheet.cell(row=row_index, column=1).value
+                if (
+                    not _is_blank(current_id)
+                    and str(current_id).strip().casefold() == target_id
+                ):
+                    if target_row is not None:
+                        raise ValueError(
+                            "Duplicate patient IDs found in the workbook."
+                        )
+                    target_row = row_index
+
+            if target_row is None:
+                return None
+
+            # Read the existing record.
+            existing_record = {
+                field: worksheet.cell(row=target_row, column=column).value
+                for column, field in enumerate(HEADERS, start=1)
+            }
+
+            # Merge supplied changes with existing information.
+            merged_data = {
+                field: existing_record[field]
+                for field in EDITABLE_FIELDS
+            }
+            merged_data.update(patient_data)
+
+            # Recalculate age when the date of birth changes without an age.
+            if "Date_of_Birth" in patient_data and "Age" not in patient_data:
+                merged_data["Age"] = None
+
+            # Validate the complete updated record.
+            cleaned_data = _clean_patient_data(merged_data)
+            updated_record = {
+                "Patient_ID": existing_record["Patient_ID"]
+            }
+            updated_record.update(cleaned_data)
+
+            # Update the existing Excel row.
+            for column, field in enumerate(HEADERS, start=1):
+                cell = worksheet.cell(row=target_row, column=column)
+                cell.value = updated_record[field]
+
+            _save_workbook(workbook)
+            return _serialize_record(updated_record)
+        finally:
+            workbook.close()
+
+
 __all__ = [
     "EDITABLE_FIELDS",
     "EXCEL_FILE",
@@ -334,5 +406,6 @@ __all__ = [
     "list_patients",
     "read_patients",
     "register_patient",
+    "update_patient",
     "search_patients",
 ]
