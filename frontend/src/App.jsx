@@ -1,9 +1,44 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 
 function App() {
   const [question, setQuestion] = useState("");
   const [activePage, setActivePage] = useState("dashboard");
+  const [patients, setPatients] = useState([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientError, setPatientError] = useState("");
+  const [patientSearch, setPatientSearch] = useState("");
+
+  useEffect(() => {
+    if (activePage !== "patients") return;
+
+    const fetchPatients = async () => {
+      setPatientsLoading(true);
+      setPatientError("");
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/patients");
+
+        if (!response.ok) {
+          throw new Error("Failed to retrieve patient records.");
+        }
+
+        const data = await response.json();
+        setPatients(data);
+      } catch (err) {
+        setPatientError(
+          err.message === "Failed to fetch"
+            ? "Cannot connect to the backend. Check whether FastAPI is running."
+            : err.message
+        );
+      } finally {
+        setPatientsLoading(false);
+      }
+    };
+
+    fetchPatients();
+  }, [activePage]);
+
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -76,38 +111,38 @@ function App() {
             className={`sidebar-link ${activePage === "dashboard" ? "active" : ""}`}
             onClick={() => setActivePage("dashboard")}
           >
-            <span>▦</span> Dashboard
+            <span className="sidebar-icon">▦</span> Dashboard
           </button>
 
           <button
             className={`sidebar-link ${activePage === "chat" ? "active" : ""}`}
             onClick={() => setActivePage("chat")}
           >
-            <span>💬</span> Chat Assistant
+            <span className="sidebar-icon">💬</span> Chat Assistant
           </button>
 
           <p className="sidebar-heading">HOSPITAL</p>
 
           <button className="sidebar-link" disabled>
-            <span>♙</span> Patient Records
+            <span className="sidebar-icon">♙</span> Patient Records
           </button>
 
           <button className="sidebar-link" disabled>
-            <span>▣</span> Appointments
+            <span className="sidebar-icon">▣</span> Appointments
           </button>
 
           <button className="sidebar-link" disabled>
-            <span>⚕</span> Laboratory
+            <span className="sidebar-icon">⚕</span> Laboratory
           </button>
 
           <button className="sidebar-link" disabled>
-            <span>◷</span> Duty Roster
+            <span className="sidebar-icon">◷</span> Duty Roster
           </button>
 
           <p className="sidebar-heading">PREFERENCES</p>
 
           <button className="sidebar-link" disabled>
-            <span>⚙</span> Settings
+            <span className="sidebar-icon">⚙</span> Settings
           </button>
         </div>
 
@@ -119,6 +154,25 @@ function App() {
       </aside>
 
       <div className="main-content">
+      <header className="topbar">
+        <div className="topbar-title">
+          <span className="topbar-eyebrow">MEDICARE HOSPITAL PORTAL</span>
+          <h1>
+            {activePage === "dashboard" ? "Dashboard" : "Chat Assistant"}
+          </h1>
+          <p>
+            {activePage === "dashboard"
+              ? "Hospital information and system overview"
+              : "Ask questions about hospital information"}
+          </p>
+        </div>
+
+        <div className="system-status">
+          <span className="system-status-dot"></span>
+          AI System Online
+        </div>
+      </header>
+
       {activePage === "dashboard" ? (
         <section className="dashboard-page">
           <div className="dashboard-heading">
@@ -169,27 +223,23 @@ function App() {
         </section>
       ) : (
         <>
-      <header>
-        <h1>AI Hospital Information Assistant</h1>
-        <p>Your intelligent hospital information assistant</p>
-      </header>
-
       <main className="chat-container">
         {messages.length === 0 && (
           <div className="welcome-message">
             <div className="welcome-icon">✚</div>
 
-            <span className="welcome-tag">AI POWERED HEALTHCARE ASSISTANT</span>
+            <span className="welcome-tag">
+              AI POWERED HEALTHCARE ASSISTANT
+            </span>
 
             <h2>How can I help you today?</h2>
 
             <p>
-              Your intelligent assistant for hospital information.
-              Ask me anything about hospital procedures, laboratory rules,
-              and staff duty schedules.
+              Get reliable information about hospital procedures,
+              laboratory rules, and staff duty schedules.
             </p>
 
-            <div className="quick-prompts-label">TRY ASKING</div>
+            <div className="quick-prompts-label">SUGGESTED QUESTIONS</div>
 
             <div className="prompt-grid">
               <button
@@ -198,7 +248,7 @@ function App() {
               >
                 <span>🧪</span>
                 <strong>Laboratory timings</strong>
-                <small>Check lab working hours</small>
+                <small>Check laboratory working hours</small>
               </button>
 
               <button
