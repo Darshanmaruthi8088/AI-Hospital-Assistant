@@ -8,6 +8,18 @@ function App() {
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [patientError, setPatientError] = useState("");
   const [patientSearch, setPatientSearch] = useState("");
+  const filteredPatients = patients.filter((patient) => {
+    const search = patientSearch.trim().toLowerCase();
+
+    if (!search) return true;
+
+    return [
+      patient.Patient_ID,
+      patient.Full_Name,
+      patient.Contact_Number,
+      patient.Department,
+    ].some((value) => String(value || "").toLowerCase().includes(search));
+  });
 
   useEffect(() => {
     if (activePage !== "patients") return;
@@ -123,7 +135,10 @@ function App() {
 
           <p className="sidebar-heading">HOSPITAL</p>
 
-          <button className="sidebar-link" disabled>
+          <button
+            className={`sidebar-link ${activePage === "patients" ? "active" : ""}`}
+            onClick={() => setActivePage("patients")}
+          >
             <span className="sidebar-icon">♙</span> Patient Records
           </button>
 
@@ -158,12 +173,18 @@ function App() {
         <div className="topbar-title">
           <span className="topbar-eyebrow">MEDICARE HOSPITAL PORTAL</span>
           <h1>
-            {activePage === "dashboard" ? "Dashboard" : "Chat Assistant"}
+            {activePage === "dashboard"
+              ? "Dashboard"
+              : activePage === "patients"
+                ? "Patient Management"
+                : "Chat Assistant"}
           </h1>
           <p>
             {activePage === "dashboard"
               ? "Hospital information and system overview"
-              : "Ask questions about hospital information"}
+              : activePage === "patients"
+                ? "Manage and retrieve patient records"
+                : "Ask questions about hospital information"}
           </p>
         </div>
 
@@ -220,6 +241,83 @@ function App() {
               <span className="dashboard-action-link">Open assistant →</span>
             </button>
           </div>
+        </section>
+      ) : activePage === "patients" ? (
+        <section className="dashboard-page">
+          <div className="dashboard-heading">
+            <span className="dashboard-tag">HOSPITAL MANAGEMENT</span>
+            <h1>Patient Records</h1>
+            <p>View, search and manage registered patient information.</p>
+          </div>
+
+          <div className="patient-toolbar">
+            <div className="patient-search">
+              <input
+                type="text"
+                placeholder="Search by patient ID, name, contact or department..."
+                value={patientSearch}
+                onChange={(e) => setPatientSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="patient-count">
+              Total Patients: <strong>{patients.length}</strong>
+            </div>
+          </div>
+
+          {patientsLoading && (
+            <p>Loading patient records...</p>
+          )}
+
+          {patientError && (
+            <div className="error-message">
+              <strong>Error:</strong> {patientError}
+            </div>
+          )}
+
+          {!patientsLoading && !patientError && (
+            <div className="patient-table-container">
+              <table className="patient-table">
+                <thead>
+                  <tr>
+                    <th>Patient ID</th>
+                    <th>Full Name</th>
+                    <th>Age</th>
+                    <th>Gender</th>
+                    <th>Contact Number</th>
+                    <th>Department</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredPatients.map((patient) => (
+                    <tr key={patient.Patient_ID}>
+                      <td>{patient.Patient_ID}</td>
+                      <td>{patient.Full_Name}</td>
+                      <td>{patient.Age ?? "—"}</td>
+                      <td>{patient.Gender || "—"}</td>
+                      <td>{patient.Contact_Number || "—"}</td>
+                      <td>{patient.Department || "—"}</td>
+                      <td>
+                        <span className="patient-status">
+                          {patient.Record_Status || "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {filteredPatients.length === 0 && (
+                <div className="patient-empty-state">
+                  {patients.length === 0
+                    ? "No patient records available yet."
+                    : "No patients match your search."}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       ) : (
         <>
