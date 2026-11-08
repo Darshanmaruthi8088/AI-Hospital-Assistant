@@ -8,6 +8,7 @@ function App() {
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [patientError, setPatientError] = useState("");
   const [patientSearch, setPatientSearch] = useState("");
+  const [patientStatusFilter, setPatientStatusFilter] = useState("Active");
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [registeringPatient, setRegisteringPatient] = useState(false);
   const [registrationMessage, setRegistrationMessage] = useState("");
@@ -179,16 +180,22 @@ function App() {
   };
 
   const filteredPatients = patients.filter((patient) => {
+    const matchesStatus =
+      patientStatusFilter === "All" ||
+      patient.Record_Status === patientStatusFilter;
+
     const search = patientSearch.trim().toLowerCase();
 
-    if (!search) return true;
-
-    return [
+    const matchesSearch = [
       patient.Patient_ID,
       patient.Full_Name,
       patient.Contact_Number,
       patient.Department,
-    ].some((value) => String(value || "").toLowerCase().includes(search));
+    ].some((value) =>
+      String(value || "").toLowerCase().includes(search)
+    );
+
+    return matchesStatus && matchesSearch;
   });
 
   useEffect(() => {
@@ -421,6 +428,21 @@ function App() {
           </div>
 
           <div className="patient-toolbar">
+            <div className="patient-status-filters">
+              {["Active", "Inactive", "All"].map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  className={`patient-filter-button ${
+                    patientStatusFilter === status ? "active" : ""
+                  }`}
+                  onClick={() => setPatientStatusFilter(status)}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+
             <div className="patient-search">
               <input
                 type="text"
@@ -431,7 +453,13 @@ function App() {
             </div>
 
             <div className="patient-count">
-              Total Patients: <strong>{patients.length}</strong>
+              Total Patients: <strong>
+                {
+                  patients.filter(
+                    (patient) => patient.Record_Status !== "Inactive"
+                  ).length
+                }
+              </strong>
             </div>
 
             <button
@@ -481,9 +509,9 @@ function App() {
                 <div className="patient-details-actions">
                   <button
                     type="button"
-                    onClick={() => setEditingPatient(true)}
+                    onClick={() => setEditingPatient(!editingPatient)}
                   >
-                    Edit Patient
+                    {editingPatient ? "Cancel Editing" : "Edit Patient"}
                   </button>
 
                   <button
@@ -499,28 +527,187 @@ function App() {
                 </div>
               </div>
 
-              <div className="patient-details-grid">
-                {[
-                  ["Date of Birth", "Date_of_Birth"],
-                  ["Age", "Age"],
-                  ["Gender", "Gender"],
-                  ["Contact Number", "Contact_Number"],
-                  ["Address", "Address"],
-                  ["Emergency Contact Name", "Emergency_Contact_Name"],
-                  ["Emergency Contact Number", "Emergency_Contact_Number"],
-                  ["Department", "Department"],
-                  ["Doctor Assigned", "Doctor_Assigned"],
-                  ["Registration Date", "Registration_Date"],
-                  ["Visit Type", "Visit_Type"],
-                  ["Record Status", "Record_Status"],
-                  ["Notes", "Notes"],
-                ].map(([label, field]) => (
-                  <div className="patient-detail-item" key={field}>
-                    <span>{label}</span>
-                    <strong>{selectedPatient[field] || "—"}</strong>
+              {editingPatient ? (
+                <form
+                  className="patient-form"
+                  onSubmit={handleUpdatePatient}
+                >
+                  <div className="patient-form-grid">
+                    <label>
+                      Full Name *
+                      <input
+                        name="Full_Name"
+                        defaultValue={selectedPatient.Full_Name || ""}
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      Date of Birth
+                      <input
+                        type="date"
+                        name="Date_of_Birth"
+                        defaultValue={selectedPatient.Date_of_Birth || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Age
+                      <input
+                        type="number"
+                        name="Age"
+                        min="0"
+                        max="150"
+                        defaultValue={selectedPatient.Age ?? ""}
+                      />
+                    </label>
+
+                    <label>
+                      Gender
+                      <select
+                        name="Gender"
+                        defaultValue={selectedPatient.Gender || ""}
+                      >
+                        <option value="">Select Gender</option>
+                        <option>Female</option>
+                        <option>Male</option>
+                        <option>Other</option>
+                        <option>Prefer not to say</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Contact Number
+                      <input
+                        name="Contact_Number"
+                        defaultValue={selectedPatient.Contact_Number || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Department
+                      <input
+                        name="Department"
+                        defaultValue={selectedPatient.Department || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Doctor Assigned
+                      <input
+                        name="Doctor_Assigned"
+                        defaultValue={selectedPatient.Doctor_Assigned || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Emergency Contact Name
+                      <input
+                        name="Emergency_Contact_Name"
+                        defaultValue={selectedPatient.Emergency_Contact_Name || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Emergency Contact Number
+                      <input
+                        name="Emergency_Contact_Number"
+                        defaultValue={selectedPatient.Emergency_Contact_Number || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Registration Date
+                      <input
+                        type="date"
+                        name="Registration_Date"
+                        defaultValue={selectedPatient.Registration_Date || ""}
+                      />
+                    </label>
+
+                    <label>
+                      Visit Type
+                      <select
+                        name="Visit_Type"
+                        defaultValue={selectedPatient.Visit_Type || ""}
+                      >
+                        <option value="">Select Visit Type</option>
+                        <option>OPD</option>
+                        <option>IPD</option>
+                        <option>Emergency</option>
+                        <option>Follow-up</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Record Status
+                      <select
+                        name="Record_Status"
+                        defaultValue={selectedPatient.Record_Status || ""}
+                      >
+                        <option value="">Select Status</option>
+                        <option>Active</option>
+                        <option>Discharged</option>
+                        <option>Inactive</option>
+                      </select>
+                    </label>
+
+                    <label className="patient-full-width">
+                      Address
+                      <textarea
+                        name="Address"
+                        rows="2"
+                        defaultValue={selectedPatient.Address || ""}
+                      />
+                    </label>
+
+                    <label className="patient-full-width">
+                      Notes
+                      <textarea
+                        name="Notes"
+                        rows="2"
+                        defaultValue={selectedPatient.Notes || ""}
+                      />
+                    </label>
                   </div>
-                ))}
-              </div>
+
+                  <div className="patient-form-actions">
+                    <button
+                      type="button"
+                      onClick={() => setEditingPatient(false)}
+                    >
+                      Cancel
+                    </button>
+
+                    <button type="submit" disabled={savingPatient}>
+                      {savingPatient ? "Saving..." : "Save Changes"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="patient-details-grid">
+                  {[
+                    ["Date of Birth", "Date_of_Birth"],
+                    ["Age", "Age"],
+                    ["Gender", "Gender"],
+                    ["Contact Number", "Contact_Number"],
+                    ["Address", "Address"],
+                    ["Emergency Contact Name", "Emergency_Contact_Name"],
+                    ["Emergency Contact Number", "Emergency_Contact_Number"],
+                    ["Department", "Department"],
+                    ["Doctor Assigned", "Doctor_Assigned"],
+                    ["Registration Date", "Registration_Date"],
+                    ["Visit Type", "Visit_Type"],
+                    ["Record Status", "Record_Status"],
+                    ["Notes", "Notes"],
+                  ].map(([label, field]) => (
+                    <div className="patient-detail-item" key={field}>
+                      <span>{label}</span>
+                      <strong>{selectedPatient[field] || "—"}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

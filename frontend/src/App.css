@@ -1515,3 +1515,34 @@ button:focus-visible {
     flex-direction: column;
   }
 }
+
+.patient-status-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.patient-filter-button {
+  padding: 8px 18px;
+  border: 1px solid #dce5e8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #52636b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.patient-filter-button:hover {
+  border-color: #0d9488;
+  color: #0d9488;
+}
+
+.patient-filter-button.active {
+  background: #0d9488;
+  border-color: #0d9488;
+  color: #ffffff;
+}
