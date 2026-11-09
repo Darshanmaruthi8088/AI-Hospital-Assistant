@@ -7,6 +7,7 @@ import re
 import tempfile
 import threading
 from datetime import date, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -143,16 +144,25 @@ def get_patient(patient_id: str) -> dict[str, Any] | None:
 
 
 def search_patients(query: str) -> list[dict[str, Any]]:
-    """Search patient IDs and full names by case-insensitive substring."""
+    """Search patients by ID, name, contact number, department, or doctor."""
     needle = str(query).strip().casefold()
     if not needle:
         return []
-    return [
-        patient
-        for patient in read_patients()
-        if needle in str(patient.get("Patient_ID") or "").casefold()
-        or needle in str(patient.get("Full_Name") or "").casefold()
-    ]
+    searchable_fields = (
+        "Patient_ID",
+        "Full_Name",
+        "Contact_Number",
+        "Department",
+        "Doctor_Assigned",
+    )
+    matching_patients = []
+    for patient in read_patients():
+        for field in searchable_fields:
+            value = str(patient.get(field) or "").casefold()
+            if needle in value:
+                matching_patients.append(patient)
+                break
+    return matching_patients
 
 
 def _parse_date(field: str, value: Any) -> date | None:
@@ -398,11 +408,164 @@ def update_patient(
             workbook.close()
 
 
+def import_patients(file_content: bytes) -> dict[str, Any]:
+    """Import valid patient records from an uploaded Excel workbook."""
+    if not file_content:
+        raise ValueError("The uploaded Excel file is empty.")
+
+    try:
+        source_workbook = load_workbook(
+            BytesIO(file_content),
+            read_only=True,
+            data_only=True,
+        )
+    except Exception as error:
+        raise ValueError("Unable to read the uploaded Excel file.") from error
+
+    imported_records: list[tuple[int, dict[str, Any]]] = []
+    skipped = 0
+    errors: list[dict[str, Any]] = []
+
+    try:
+        if SHEET_NAME not in source_workbook.sheetnames:
+            raise ValueError("Uploaded workbook must contain a Patients sheet.")
+
+        source_sheet = source_workbook[SHEET_NAME]
+        source_headers = tuple(
+            source_sheet.cell(row=1, column=column).value
+            for column in range(1, len(HEADERS) + 1)
+        )
+        extra_header = source_sheet.cell(row=1, column=len(HEADERS) + 1).value
+        if source_headers != HEADERS or not _is_blank(extra_header):
+            raise ValueError(
+                "Uploaded Excel headers do not match the hospital patient template."
+            )
+
+        for row_number, values in enumerate(
+            source_sheet.iter_rows(
+                min_row=2,
+                max_col=len(HEADERS),
+                values_only=True,
+            ),
+            start=2,
+        ):
+            if all(_is_blank(value) for value in values):
+                continue
+
+            raw_patient_id = values[0]
+            if not isinstance(raw_patient_id, str) or not raw_patient_id.strip():
+                skipped += 1
+                errors.append(
+                    {
+                        "row": row_number,
+                        "error": "Patient_ID must be non-empty text.",
+                    }
+                )
+                continue
+
+            patient_id = raw_patient_id.strip()
+            source_record = dict(zip(HEADERS, values))
+            patient_data = {
+                field: source_record[field]
+                for field in EDITABLE_FIELDS
+            }
+
+            try:
+                cleaned_data = _clean_patient_data(patient_data)
+            except ValueError as error:
+                skipped += 1
+                errors.append(
+                    {
+                        "row": row_number,
+                        "patient_id": patient_id,
+                        "error": str(error),
+                    }
+                )
+                continue
+
+            imported_records.append(
+                (
+                    row_number,
+                    {
+                        "Patient_ID": patient_id,
+                        **cleaned_data,
+                    },
+                )
+            )
+    finally:
+        source_workbook.close()
+
+    imported = 0
+    with _file_lock:
+        workbook, worksheet = _load_sheet()
+        try:
+            existing_ids: set[str] = set()
+            for row_number in range(2, worksheet.max_row + 1):
+                values = [
+                    worksheet.cell(row=row_number, column=column).value
+                    for column in range(1, len(HEADERS) + 1)
+                ]
+                if all(_is_blank(value) for value in values):
+                    continue
+
+                raw_patient_id = values[0]
+                if _is_blank(raw_patient_id):
+                    raise ValueError(
+                        f"Populated row {row_number} in the Patients sheet "
+                        "is missing Patient_ID."
+                    )
+
+                patient_id = str(raw_patient_id).strip()
+                normalized_id = patient_id.casefold()
+                if normalized_id in existing_ids:
+                    raise ValueError(
+                        "The Patients sheet already contains duplicate patient IDs."
+                    )
+                existing_ids.add(normalized_id)
+
+            next_row = worksheet.max_row + 1
+            for row_number, record in imported_records:
+                patient_id = record["Patient_ID"]
+                normalized_id = patient_id.casefold()
+                if normalized_id in existing_ids:
+                    skipped += 1
+                    errors.append(
+                        {
+                            "row": row_number,
+                            "patient_id": patient_id,
+                            "error": "Duplicate Patient_ID; row skipped.",
+                        }
+                    )
+                    continue
+
+                for column, field in enumerate(HEADERS, start=1):
+                    worksheet.cell(
+                        row=next_row,
+                        column=column,
+                        value=record[field],
+                    )
+                existing_ids.add(normalized_id)
+                imported += 1
+                next_row += 1
+
+            if imported:
+                _save_workbook(workbook)
+        finally:
+            workbook.close()
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
 __all__ = [
     "EDITABLE_FIELDS",
     "EXCEL_FILE",
     "HEADERS",
     "get_patient",
+    "import_patients",
     "list_patients",
     "read_patients",
     "register_patient",

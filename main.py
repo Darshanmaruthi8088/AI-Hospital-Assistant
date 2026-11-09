@@ -2,7 +2,7 @@ from datetime import date
 from typing import Literal
 from urllib.error import URLError
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -71,6 +71,22 @@ def list_patients():
         ) from error
 
 
+@app.get("/patients/search")
+def search_patient_records(q: str):
+    if not q.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Search query cannot be empty.",
+        )
+    try:
+        return patient_store.search_patients(q)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Patient record storage is unavailable or invalid.",
+        ) from error
+
+
 @app.post("/patients", status_code=201)
 def create_patient(request: PatientCreateRequest):
     try:
@@ -109,6 +125,37 @@ def update_patient(patient_id: str, request: PatientCreateRequest):
             status_code=503,
             detail="Patient record storage is unavailable.",
         ) from error
+
+
+@app.post("/patients/import")
+async def import_patient_records(file: UploadFile = File(...)):
+    try:
+        if not file.filename or not file.filename.lower().endswith(".xlsx"):
+            raise HTTPException(
+                status_code=400,
+                detail="Please upload a valid .xlsx Excel file.",
+            )
+
+        file_content = await file.read()
+        if len(file_content) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="File size must not exceed 10 MB.",
+            )
+
+        return patient_store.import_patients(file_content)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Patient record storage is unavailable.",
+        ) from error
+    finally:
+        await file.close()
 
 
 @app.get("/patients/{patient_id}")

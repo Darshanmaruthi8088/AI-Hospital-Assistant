@@ -9,6 +9,9 @@ function App() {
   const [patientError, setPatientError] = useState("");
   const [patientSearch, setPatientSearch] = useState("");
   const [patientStatusFilter, setPatientStatusFilter] = useState("Active");
+  const [importingPatients, setImportingPatients] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
+  const [importErrors, setImportErrors] = useState([]);
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [registeringPatient, setRegisteringPatient] = useState(false);
   const [registrationMessage, setRegistrationMessage] = useState("");
@@ -176,6 +179,59 @@ function App() {
       setRegistrationMessage(err.message);
     } finally {
       setRegisteringPatient(false);
+    }
+  };
+
+  const handleImportPatients = async (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    setImportingPatients(true);
+    setImportMessage("");
+    setImportErrors([]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(
+        "http://127.0.0.1:8000/patients/import",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail || "Unable to import patient records."
+        );
+      }
+
+      const patientsResponse = await fetch(
+        "http://127.0.0.1:8000/patients"
+      );
+
+      if (!patientsResponse.ok) {
+        throw new Error("Import completed, but patient list refresh failed.");
+      }
+
+      const updatedPatients = await patientsResponse.json();
+      setPatients(updatedPatients);
+
+      setImportMessage(
+        `Import completed! Imported: ${result.imported ?? 0}, Skipped: ${result.skipped ?? 0}, Failed: ${result.failed ?? 0}.`
+      );
+
+      setImportErrors(result.errors || []);
+    } catch (error) {
+      setImportMessage(`Import failed: ${error.message}`);
+    } finally {
+      setImportingPatients(false);
+      event.target.value = "";
     }
   };
 
@@ -462,6 +518,17 @@ function App() {
               </strong>
             </div>
 
+            <label className="import-patient-button">
+              {importingPatients ? "Importing..." : "↑ Import from Excel"}
+
+              <input
+                type="file"
+                accept=".xlsx"
+                onChange={handleImportPatients}
+                disabled={importingPatients}
+              />
+            </label>
+
             <button
               className="add-patient-button"
               onClick={() => {
@@ -472,6 +539,24 @@ function App() {
               + Add New Patient
             </button>
           </div>
+
+          {importMessage && (
+            <div className="patient-import-message">
+              {importMessage}
+            </div>
+          )}
+
+          {importErrors.length > 0 && (
+            <div className="patient-import-errors">
+              <strong>Import warnings:</strong>
+
+              {importErrors.map((error, index) => (
+                <p key={`${error.row}-${index}`}>
+                  Row {error.row}: {error.patient_id || ""} — {error.error || error.message}
+                </p>
+              ))}
+            </div>
+          )}
 
           {registrationMessage && (
             <div

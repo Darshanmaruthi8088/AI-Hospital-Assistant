@@ -1546,3 +1546,59 @@ button:focus-visible {
   border-color: #0d9488;
   color: #ffffff;
 }
+
+.import-patient-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 18px;
+  border: 1px solid #0d9488;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0d9488;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.import-patient-button:hover {
+  background: #f0fdfa;
+}
+
+.import-patient-button input {
+  display: none;
+}
+
+.import-patient-button:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.patient-import-message {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-size: 14px;
+}
+
+.patient-import-errors {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #f3d7a3;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+
+.patient-import-errors p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.patient-toolbar {
+  flex-wrap: wrap;
+}
