@@ -263,6 +263,84 @@ def _result(answer, sources=None, warnings=None, validation_status="not_applicab
     }
 
 
+def answer_patient_question(question: str, patient: dict) -> dict:
+    """Answer a question using only the supplied patient's stored record."""
+    query = str(question or "").strip()
+    if not query:
+        raise ValueError("Please enter a question.")
+    if not isinstance(patient, dict):
+        raise ValueError("A valid patient record is required.")
+
+    patient_fields = {
+        "Patient ID": "Patient_ID",
+        "Full Name": "Full_Name",
+        "Date of Birth": "Date_of_Birth",
+        "Age": "Age",
+        "Gender": "Gender",
+        "Contact Number": "Contact_Number",
+        "Address": "Address",
+        "Emergency Contact Name": "Emergency_Contact_Name",
+        "Emergency Contact Number": "Emergency_Contact_Number",
+        "Department": "Department",
+        "Assigned Doctor": "Doctor_Assigned",
+        "Registration Date": "Registration_Date",
+        "Visit Type": "Visit_Type",
+        "Record Status": "Record_Status",
+        "Notes": "Notes",
+    }
+    patient_context = "\n".join(
+        f"{label}: {patient[field]}"
+        for label, field in patient_fields.items()
+        if patient.get(field) is not None
+        and str(patient[field]).strip()
+    )
+    patient_prompt = f"""You are an AI Hospital Patient Information Assistant.
+Answer the user's question using ONLY the selected patient's record below.
+Rules:
+- Never invent patient information.
+- If a requested field is missing or empty in the patient record, reply exactly: "That information is not available in this patient's record."
+- Never say that you need to check the record; the selected record has already been provided.
+- Never use information about another patient.
+- If the requested information is missing, clearly say it is not available in this patient's record.
+- Do not make medical diagnoses or treatment recommendations.
+- Do not infer information that is not explicitly recorded.
+- Give a concise and direct answer.
+- Do not reveal information unrelated to the user's question.
+
+Selected patient record:
+{patient_context}
+
+User question:
+{query}
+
+Answer:"""
+
+    try:
+        generated_answer = _call_ollama(patient_prompt)
+    except Exception:
+        return _result(
+            "Unable to generate an answer from the selected patient record.",
+            warnings=["The patient-answering service could not complete the request."],
+            validation_status="unverified",
+        )
+
+    if not generated_answer:
+        return _result(
+            "The selected patient's record does not contain the requested information.",
+            validation_status="unverified",
+        )
+
+    return _result(
+        generated_answer,
+        sources=[{
+            "source_id": "P1",
+            "filename": f"Patient record {patient.get('Patient_ID', 'unknown')}",
+            "text": patient_context,
+        }],
+        validation_status="unverified",
+    )
+
+
 def answer_question(question: str) -> dict:
     """Answer from retrieved chunks and show only statements that pass citation checks."""
     query = question.strip()
