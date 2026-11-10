@@ -1155,6 +1155,267 @@ function App() {
             </div>
           )}
         </section>
+      ) : activePage === "staff" ? (
+        <section className="dashboard-page">
+          <div className="dashboard-heading">
+            <span className="dashboard-tag">HOSPITAL MANAGEMENT</span>
+            <h1>Staff Management</h1>
+            <p>View, search, register and update hospital staff records.</p>
+          </div>
+
+          <div className="patient-toolbar staff-toolbar">
+            <div className="patient-search staff-search">
+              <input
+                type="search"
+                aria-label="Search staff records"
+                placeholder="Search by staff ID, name, role, department or contact..."
+                value={staffSearch}
+                onChange={(event) => setStaffSearch(event.target.value)}
+              />
+            </div>
+
+            <div className="patient-count" aria-live="polite">
+              Total Staff: <strong>{staffTotalCount}</strong>
+              {staffSearch.trim() && (
+                <span className="staff-result-count">
+                  {staffRecords.length} matching
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="staff-secondary-button"
+              onClick={() => setStaffRefreshKey((current) => current + 1)}
+              disabled={staffLoading}
+            >
+              {staffLoading ? "Refreshing..." : "Refresh"}
+            </button>
+
+            <button
+              type="button"
+              className="add-patient-button"
+              onClick={openNewStaffForm}
+            >
+              + Add Staff
+            </button>
+          </div>
+
+          {staffFormMessage && (
+            <div
+              className={
+                staffFormMessage.includes("successfully")
+                  ? "registration-success"
+                  : "registration-error"
+              }
+              role="status"
+            >
+              {staffFormMessage}
+            </div>
+          )}
+
+          {staffFormOpen && (
+            <div className="patient-form-container staff-form-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>{selectedStaff ? "Edit Staff Member" : "Register Staff Member"}</h2>
+                  <p>
+                    {selectedStaff
+                      ? `Staff ID: ${selectedStaff.Staff_ID}`
+                      : "Enter the staff member's details below."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  onClick={closeStaffForm}
+                  aria-label="Close staff form"
+                >
+                  ×
+                </button>
+              </div>
+
+              <form
+                key={selectedStaff?.Staff_ID || "new-staff"}
+                className="patient-form"
+                onSubmit={handleSaveStaff}
+              >
+                <div className="patient-form-grid">
+                  <label>
+                    Full Name *
+                    <input
+                      name="Full_Name"
+                      type="text"
+                      required
+                      maxLength="32767"
+                      defaultValue={selectedStaff?.Full_Name || ""}
+                    />
+                  </label>
+
+                  <label>
+                    Role
+                    <select name="Role" defaultValue={selectedStaff?.Role || ""}>
+                      <option value="">Select a role</option>
+                      {[
+                        "Doctor",
+                        "Nurse",
+                        "Receptionist",
+                        "Lab Technician",
+                        "Pharmacist",
+                        "Administrator",
+                        "Other",
+                      ].map((role) => (
+                        <option key={role} value={role}>{role}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Department
+                    <input
+                      name="Department"
+                      type="text"
+                      maxLength="32767"
+                      defaultValue={selectedStaff?.Department || ""}
+                    />
+                  </label>
+
+                  <label>
+                    Contact Number
+                    <input
+                      name="Contact_Number"
+                      type="tel"
+                      maxLength="32767"
+                      defaultValue={selectedStaff?.Contact_Number || ""}
+                    />
+                  </label>
+
+                  <label>
+                    Email
+                    <input
+                      name="Email"
+                      type="email"
+                      maxLength="32767"
+                      defaultValue={selectedStaff?.Email || ""}
+                    />
+                  </label>
+
+                  <label>
+                    Employment Status *
+                    <select
+                      name="Employment_Status"
+                      required
+                      defaultValue={selectedStaff?.Employment_Status || "Active"}
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                      <option value="On Leave">On Leave</option>
+                      <option value="Resigned">Resigned</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Joining Date
+                    <input
+                      name="Joining_Date"
+                      type="date"
+                      defaultValue={selectedStaff?.Joining_Date || ""}
+                    />
+                  </label>
+
+                  <label className="patient-full-width">
+                    Notes
+                    <textarea
+                      name="Notes"
+                      rows="3"
+                      maxLength="32767"
+                      defaultValue={selectedStaff?.Notes || ""}
+                    />
+                  </label>
+                </div>
+
+                <div className="patient-form-actions">
+                  <button type="button" onClick={closeStaffForm} disabled={savingStaff}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={savingStaff}>
+                    {savingStaff
+                      ? "Saving..."
+                      : selectedStaff
+                        ? "Save Changes"
+                        : "Register Staff"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {staffLoading && <p className="staff-loading">Loading staff records...</p>}
+
+          {staffError && (
+            <div className="registration-error" role="alert">
+              <strong>Error:</strong> {staffError}
+            </div>
+          )}
+
+          {!staffLoading && !staffError && (
+            <div className="patient-table-container">
+              <table className="patient-table staff-table">
+                <thead>
+                  <tr>
+                    <th>Staff ID</th>
+                    <th>Full Name</th>
+                    <th>Role</th>
+                    <th>Department</th>
+                    <th>Contact Number</th>
+                    <th>Email</th>
+                    <th>Employment Status</th>
+                    <th>Joining Date</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffRecords.map((staffMember) => (
+                    <tr key={staffMember.Staff_ID}>
+                      <td><strong>{staffMember.Staff_ID}</strong></td>
+                      <td>{staffMember.Full_Name || "—"}</td>
+                      <td>{staffMember.Role || "—"}</td>
+                      <td>{staffMember.Department || "—"}</td>
+                      <td>{staffMember.Contact_Number || "—"}</td>
+                      <td>{staffMember.Email || "—"}</td>
+                      <td>
+                        <span
+                          className={`staff-status-badge status-${String(staffMember.Employment_Status || "unknown").toLowerCase().replaceAll(" ", "-")}`}
+                        >
+                          {staffMember.Employment_Status || "—"}
+                        </span>
+                      </td>
+                      <td>{staffMember.Joining_Date || "—"}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="staff-edit-button"
+                          onClick={() => openEditStaffForm(staffMember)}
+                          aria-label={`Edit ${staffMember.Full_Name}`}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {staffRecords.length === 0 && (
+                <div className="patient-empty-state">
+                  {staffSearch.trim()
+                    ? "No staff members match your search."
+                    : "No staff records available yet."}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       ) : (
         <>
       <main className="chat-container">

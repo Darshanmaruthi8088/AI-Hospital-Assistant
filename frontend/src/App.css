@@ -1602,3 +1602,103 @@ button:focus-visible {
 .patient-toolbar {
   flex-wrap: wrap;
 }
+
+/* STAFF MANAGEMENT */
+
+.staff-toolbar {
+  align-items: center;
+}
+
+.staff-search {
+  min-width: min(320px, 100%);
+}
+
+.staff-result-count {
+  margin-left: 10px;
+  color: #819198;
+  font-size: 12px;
+}
+
+.staff-secondary-button,
+.staff-edit-button {
+  padding: 11px 16px;
+  border: 1px solid #dce5e8;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #52636b;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.staff-secondary-button:hover:not(:disabled),
+.staff-edit-button:hover {
+  border-color: #0d9488;
+  color: #0d9488;
+  background: #f0fdfa;
+}
+
+.staff-secondary-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.staff-table {
+  min-width: 1120px;
+}
+
+.staff-table td {
+  overflow-wrap: anywhere;
+}
+
+.staff-status-badge {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.staff-status-badge.status-active {
+  background: #e6f7f2;
+  color: #0d9488;
+}
+
+.staff-status-badge.status-inactive {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.staff-status-badge.status-on-leave {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.staff-status-badge.status-resigned {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.staff-form-container {
+  margin-top: 20px;
+}
+
+.staff-loading {
+  padding: 20px 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+@media (max-width: 700px) {
+  .staff-toolbar {
+    align-items: stretch;
+  }
+
+  .staff-result-count {
+    display: block;
+    margin: 4px 0 0;
+  }
+}

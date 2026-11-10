@@ -1,5 +1,6 @@
 from datetime import date, datetime, time
 from urllib.error import URLError
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
