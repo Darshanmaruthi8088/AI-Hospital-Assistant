@@ -20,6 +20,16 @@ function App() {
   const [patientDetailsError, setPatientDetailsError] = useState("");
   const [editingPatient, setEditingPatient] = useState(false);
   const [savingPatient, setSavingPatient] = useState(false);
+  const [staffRecords, setStaffRecords] = useState([]);
+  const [staffTotalCount, setStaffTotalCount] = useState(0);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState("");
+  const [staffSearch, setStaffSearch] = useState("");
+  const [staffRefreshKey, setStaffRefreshKey] = useState(0);
+  const [staffFormOpen, setStaffFormOpen] = useState(false);
+  const [selectedStaff, setSelectedStaff] = useState(null);
+  const [savingStaff, setSavingStaff] = useState(false);
+  const [staffFormMessage, setStaffFormMessage] = useState("");
 
   const handleViewPatient = async (patientId) => {
     setPatientDetailsLoading(true);
@@ -284,6 +294,152 @@ function App() {
     fetchPatients();
   }, [activePage]);
 
+  useEffect(() => {
+    if (activePage !== "staff") return;
+
+    const controller = new AbortController();
+    const search = staffSearch.trim();
+    let timeoutId;
+
+    const fetchStaff = async () => {
+      setStaffLoading(true);
+      setStaffError("");
+
+      try {
+        const listResponse = await fetch("http://127.0.0.1:8000/staff", {
+          signal: controller.signal,
+        });
+        const allStaff = await listResponse.json().catch(() => []);
+
+        if (!listResponse.ok) {
+          throw new Error(
+            Array.isArray(allStaff.detail)
+              ? allStaff.detail.map((item) => item.msg).join(", ")
+              : allStaff.detail || "Failed to retrieve staff records."
+          );
+        }
+
+        setStaffTotalCount(allStaff.length);
+
+        if (!search) {
+          setStaffRecords(allStaff);
+          return;
+        }
+
+        const searchResponse = await fetch(
+          `http://127.0.0.1:8000/staff/search?q=${encodeURIComponent(search)}`,
+          { signal: controller.signal }
+        );
+        const matchingStaff = await searchResponse.json().catch(() => []);
+
+        if (!searchResponse.ok) {
+          throw new Error(
+            Array.isArray(matchingStaff.detail)
+              ? matchingStaff.detail.map((item) => item.msg).join(", ")
+              : matchingStaff.detail || "Staff search failed."
+          );
+        }
+
+        setStaffRecords(matchingStaff);
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        setStaffError(
+          err.message === "Failed to fetch"
+            ? "Cannot connect to the backend. Check whether FastAPI is running."
+            : err.message
+        );
+      } finally {
+        if (!controller.signal.aborted) setStaffLoading(false);
+      }
+    };
+
+    timeoutId = window.setTimeout(fetchStaff, search ? 250 : 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [activePage, staffSearch, staffRefreshKey]);
+
+  const handleSaveStaff = async (event) => {
+    event.preventDefault();
+
+    const formData = new FormData(event.currentTarget);
+    const staffData = Object.fromEntries(
+      [...formData.entries()].map(([key, value]) => [key, value.trim()])
+    );
+
+    if (!staffData.Full_Name) {
+      setStaffFormMessage("Full Name is required.");
+      return;
+    }
+
+    if (!staffData.Employment_Status) {
+      setStaffFormMessage("Employment Status is required.");
+      return;
+    }
+
+    staffData.Joining_Date = staffData.Joining_Date || null;
+    setSavingStaff(true);
+    setStaffFormMessage("");
+
+    const isEditing = Boolean(selectedStaff);
+    const endpoint = isEditing
+      ? `http://127.0.0.1:8000/staff/${encodeURIComponent(selectedStaff.Staff_ID)}`
+      : "http://127.0.0.1:8000/staff";
+
+    try {
+      const response = await fetch(endpoint, {
+        method: isEditing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(staffData),
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const detail = Array.isArray(result.detail)
+          ? result.detail.map((item) => item.msg).join(", ")
+          : result.detail;
+        throw new Error(detail || "Unable to save staff details.");
+      }
+
+      setStaffFormOpen(false);
+      setSelectedStaff(null);
+      setStaffFormMessage(
+        isEditing
+          ? `Staff record ${result.Staff_ID} updated successfully.`
+          : `Staff member registered successfully. Staff ID: ${result.Staff_ID}`
+      );
+      setStaffRefreshKey((current) => current + 1);
+    } catch (err) {
+      setStaffFormMessage(
+        err.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : err.message
+      );
+    } finally {
+      setSavingStaff(false);
+    }
+  };
+
+  const openNewStaffForm = () => {
+    setSelectedStaff(null);
+    setStaffFormMessage("");
+    setStaffFormOpen(true);
+  };
+
+  const openEditStaffForm = (staffMember) => {
+    setSelectedStaff(staffMember);
+    setStaffFormMessage("");
+    setStaffFormOpen(true);
+  };
+
+  const closeStaffForm = () => {
+    setStaffFormOpen(false);
+    setSelectedStaff(null);
+    setStaffFormMessage("");
+  };
+
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -376,6 +532,13 @@ function App() {
             <span className="sidebar-icon">♙</span> Patient Records
           </button>
 
+          <button
+            className={`sidebar-link ${activePage === "staff" ? "active" : ""}`}
+            onClick={() => setActivePage("staff")}
+          >
+            <span className="sidebar-icon">♟</span> Staff Management
+          </button>
+
           <button className="sidebar-link" disabled>
             <span className="sidebar-icon">▣</span> Appointments
           </button>
@@ -411,14 +574,18 @@ function App() {
               ? "Dashboard"
               : activePage === "patients"
                 ? "Patient Management"
-                : "Chat Assistant"}
+                : activePage === "staff"
+                  ? "Staff Management"
+                  : "Chat Assistant"}
           </h1>
           <p>
             {activePage === "dashboard"
               ? "Hospital information and system overview"
               : activePage === "patients"
                 ? "Manage and retrieve patient records"
-                : "Ask questions about hospital information"}
+                : activePage === "staff"
+                  ? "Register, search and update staff records"
+                  : "Ask questions about hospital information"}
           </p>
         </div>
 

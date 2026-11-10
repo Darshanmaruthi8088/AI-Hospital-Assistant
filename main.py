@@ -1,12 +1,12 @@
-from datetime import date
-from typing import Literal
+from datetime import date, datetime, time
 from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import patient_store
+import staff_store
 from rag_engine import answer_patient_question, answer_question
 
 app = FastAPI(
@@ -46,6 +46,87 @@ class PatientCreateRequest(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+class APIRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class StaffFields(APIRequestModel):
+    Full_Name: str | None = Field(default=None, max_length=32767)
+    Role: str | None = Field(default=None, max_length=32767)
+    Department: str | None = Field(default=None, max_length=32767)
+    Contact_Number: str | None = Field(default=None, max_length=32767)
+    Email: str | None = Field(default=None, max_length=32767)
+    Employment_Status: str | None = Field(default=None, max_length=32767)
+    Joining_Date: date | None = None
+    Notes: str | None = Field(default=None, max_length=32767)
+
+
+class StaffCreateRequest(StaffFields):
+    Full_Name: str = Field(..., min_length=1, max_length=32767)
+
+
+class StaffUpdateRequest(StaffFields):
+    pass
+
+
+class ShiftFields(APIRequestModel):
+    Shift_Name: str | None = Field(default=None, max_length=32767)
+    Start_Time: time | None = None
+    End_Time: time | None = None
+    Crosses_Midnight: str | None = Field(default=None, max_length=32767)
+    Description: str | None = Field(default=None, max_length=32767)
+    Shift_Status: str | None = Field(default=None, max_length=32767)
+
+
+class ShiftCreateRequest(ShiftFields):
+    Shift_Name: str = Field(..., min_length=1, max_length=32767)
+    Start_Time: time
+    End_Time: time
+    Crosses_Midnight: str = Field(..., min_length=1, max_length=32767)
+
+
+class ShiftUpdateRequest(ShiftFields):
+    pass
+
+
+class DutyAssignmentFields(APIRequestModel):
+    Staff_ID: str | None = Field(default=None, max_length=32767)
+    Duty_Date: date | None = None
+    Shift_ID: str | None = Field(default=None, max_length=32767)
+    Assigned_By: str | None = Field(default=None, max_length=32767)
+    Assignment_Status: str | None = Field(default=None, max_length=32767)
+    Notes: str | None = Field(default=None, max_length=32767)
+
+
+class DutyAssignmentCreateRequest(DutyAssignmentFields):
+    Staff_ID: str = Field(..., min_length=1, max_length=32767)
+    Duty_Date: date
+    Shift_ID: str = Field(..., min_length=1, max_length=32767)
+
+
+class AttendanceFields(APIRequestModel):
+    Assignment_ID: str | None = Field(default=None, max_length=32767)
+    Staff_ID: str | None = Field(default=None, max_length=32767)
+    Duty_Date: date | None = None
+    Check_In_DateTime: datetime | None = None
+    Check_Out_DateTime: datetime | None = None
+    Attendance_Status: str | None = Field(default=None, max_length=32767)
+    Recorded_By: str | None = Field(default=None, max_length=32767)
+    Correction_Reason: str | None = Field(default=None, max_length=32767)
+    Notes: str | None = Field(default=None, max_length=32767)
+
+
+class AttendanceCreateRequest(AttendanceFields):
+    Assignment_ID: str = Field(..., min_length=1, max_length=32767)
+    Attendance_Status: str = Field(..., min_length=1, max_length=32767)
+    Recorded_By: str = Field(..., min_length=1, max_length=32767)
+
+
+class AttendanceCorrectionRequest(AttendanceFields):
+    Recorded_By: str = Field(..., min_length=1, max_length=32767)
+    Correction_Reason: str = Field(..., min_length=1, max_length=32767)
 
 
 @app.get("/")
@@ -172,6 +253,238 @@ def get_patient(patient_id: str):
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found.")
     return patient
+
+
+@app.get("/staff")
+def list_staff_records():
+    try:
+        return staff_store.list_staff()
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Staff record storage is unavailable or invalid.",
+        ) from error
+
+
+@app.get("/staff/search")
+def search_staff_records(q: str):
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Search query cannot be empty.")
+    try:
+        return staff_store.search_staff(q)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Staff record storage is unavailable or invalid.",
+        ) from error
+
+
+@app.get("/staff/{staff_id}")
+def get_staff_record(staff_id: str):
+    try:
+        staff = staff_store.get_staff(staff_id)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Staff record storage is unavailable or invalid.",
+        ) from error
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff member not found.")
+    return staff
+
+
+@app.post("/staff", status_code=201)
+def create_staff_record(request: StaffCreateRequest):
+    try:
+        return staff_store.register_staff(request.model_dump(exclude_unset=True))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Staff record storage is unavailable.",
+        ) from error
+
+
+@app.put("/staff/{staff_id}")
+def update_staff_record(staff_id: str, request: StaffUpdateRequest):
+    try:
+        updated_staff = staff_store.update_staff(
+            staff_id,
+            request.model_dump(exclude_unset=True),
+        )
+        if updated_staff is None:
+            raise HTTPException(status_code=404, detail="Staff member not found.")
+        return updated_staff
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Staff record storage is unavailable.",
+        ) from error
+
+
+@app.get("/shifts")
+def list_shift_records():
+    try:
+        return staff_store.list_shifts()
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Shift storage is unavailable or invalid.",
+        ) from error
+
+
+@app.get("/shifts/{shift_id}")
+def get_shift_record(shift_id: str):
+    try:
+        shift = staff_store.get_shift(shift_id)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Shift storage is unavailable or invalid.",
+        ) from error
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found.")
+    return shift
+
+
+@app.post("/shifts", status_code=201)
+def create_shift_record(request: ShiftCreateRequest):
+    try:
+        return staff_store.create_shift(request.model_dump(exclude_unset=True))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Shift storage is unavailable.",
+        ) from error
+
+
+@app.put("/shifts/{shift_id}")
+def update_shift_record(shift_id: str, request: ShiftUpdateRequest):
+    try:
+        updated_shift = staff_store.update_shift(
+            shift_id,
+            request.model_dump(exclude_unset=True),
+        )
+        if updated_shift is None:
+            raise HTTPException(status_code=404, detail="Shift not found.")
+        return updated_shift
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Shift storage is unavailable.",
+        ) from error
+
+
+@app.get("/duty-assignments")
+def list_duty_assignment_records():
+    try:
+        return staff_store.list_duty_assignments()
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Duty assignment storage is unavailable or invalid.",
+        ) from error
+
+
+@app.get("/duty-assignments/{assignment_id}")
+def get_duty_assignment_record(assignment_id: str):
+    try:
+        assignment = staff_store.get_duty_assignment(assignment_id)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Duty assignment storage is unavailable or invalid.",
+        ) from error
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Duty assignment not found.")
+    return assignment
+
+
+@app.post("/duty-assignments", status_code=201)
+def create_duty_assignment_record(request: DutyAssignmentCreateRequest):
+    try:
+        return staff_store.create_duty_assignment(
+            request.model_dump(exclude_unset=True)
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Duty assignment storage is unavailable.",
+        ) from error
+
+
+@app.get("/attendance")
+def list_attendance_records():
+    try:
+        return staff_store.list_attendance()
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Attendance storage is unavailable or invalid.",
+        ) from error
+
+
+@app.get("/attendance/{attendance_id}")
+def get_attendance_record(attendance_id: str):
+    try:
+        attendance = staff_store.get_attendance(attendance_id)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Attendance storage is unavailable or invalid.",
+        ) from error
+    if attendance is None:
+        raise HTTPException(status_code=404, detail="Attendance record not found.")
+    return attendance
+
+
+@app.post("/attendance", status_code=201)
+def create_attendance_record(request: AttendanceCreateRequest):
+    try:
+        return staff_store.record_attendance(request.model_dump(exclude_unset=True))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Attendance storage is unavailable.",
+        ) from error
+
+
+@app.put("/attendance/{attendance_id}")
+def update_attendance_record(
+    attendance_id: str,
+    request: AttendanceCorrectionRequest,
+):
+    correction = request.model_dump(exclude_unset=True)
+    recorded_by = correction.pop("Recorded_By")
+    correction_reason = correction.pop("Correction_Reason")
+    try:
+        updated_attendance = staff_store.correct_attendance(
+            attendance_id,
+            correction,
+            recorded_by=recorded_by,
+            correction_reason=correction_reason,
+        )
+        if updated_attendance is None:
+            raise HTTPException(status_code=404, detail="Attendance record not found.")
+        return updated_attendance
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Attendance storage is unavailable.",
+        ) from error
 
 
 @app.post("/ask")

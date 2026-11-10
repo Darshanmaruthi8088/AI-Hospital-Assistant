@@ -302,10 +302,12 @@ def _clean_staff_data(staff_data: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = _parse_text(
                 field,
                 value,
-                required=(field == "Full_Name"),
+                required=(field in {"Full_Name", "Employment_Status"}),
             )
     if not cleaned.get("Full_Name"):
         raise ValueError("Full_Name is required.")
+    if not cleaned.get("Employment_Status"):
+        raise ValueError("Employment_Status is required.")
     for field, options in _ENUM_FIELDS[STAFF_SHEET].items():
         _validate_enum(field, cleaned.get(field), options)
     return cleaned
@@ -471,7 +473,8 @@ def _serialize_record(sheet_name: str, record: dict[str, Any]) -> dict[str, Any]
             serialized[field] = _serialize_value(parsed) if parsed is not None else None
         else:
             required = field == id_field or (
-                sheet_name == STAFF_SHEET and field == "Full_Name"
+                sheet_name == STAFF_SHEET
+                and field in {"Full_Name", "Employment_Status"}
             )
             serialized[field] = _parse_text(field, value, required=required)
 
@@ -531,7 +534,7 @@ def _scan_records(workbook: Any, sheet_name: str) -> list[tuple[int, dict[str, A
 
 
 def _validate_workbook_integrity(workbook: Any) -> None:
-    """Reject cross-sheet references or attendance links that do not agree."""
+    """Reject invalid references, duty assignments, and attendance links."""
     records_by_sheet = {
         sheet_name: _scan_records(workbook, sheet_name)
         for sheet_name in SHEET_HEADERS
@@ -549,17 +552,67 @@ def _validate_workbook_integrity(workbook: Any) -> None:
         for _, record in records_by_sheet[ASSIGNMENTS_SHEET]
     }
 
+    assignment_slots: set[tuple[str, str, str]] = set()
+    intervals_by_staff: dict[str, list[tuple[datetime, datetime, str]]] = {}
+    now = datetime.now()
     for _, assignment in records_by_sheet[ASSIGNMENTS_SHEET]:
-        if assignment["Staff_ID"].casefold() not in staff_by_id:
+        normalized_staff_id = assignment["Staff_ID"].casefold()
+        normalized_shift_id = assignment["Shift_ID"].casefold()
+        staff = staff_by_id.get(normalized_staff_id)
+        if staff is None:
             raise ValueError(
                 f"Duty assignment {assignment['Assignment_ID']} references unknown "
                 f"Staff_ID {assignment['Staff_ID']}."
             )
-        if assignment["Shift_ID"].casefold() not in shifts_by_id:
+        shift = shifts_by_id.get(normalized_shift_id)
+        if shift is None:
             raise ValueError(
                 f"Duty assignment {assignment['Assignment_ID']} references unknown "
                 f"Shift_ID {assignment['Shift_ID']}."
             )
+
+        slot = (
+            normalized_staff_id,
+            assignment["Duty_Date"],
+            normalized_shift_id,
+        )
+        if slot in assignment_slots:
+            raise ValueError(
+                "Duplicate duty assignment for the same staff member, date, and shift: "
+                f"{assignment['Assignment_ID']}."
+            )
+        assignment_slots.add(slot)
+
+        if assignment["Assignment_Status"] == "Cancelled":
+            continue
+
+        start, end = _assignment_interval(assignment, shift)
+        if end > now:
+            if staff["Employment_Status"] != "Active":
+                raise ValueError(
+                    f"Future or ongoing duty assignment {assignment['Assignment_ID']} "
+                    f"references non-active Staff_ID {assignment['Staff_ID']}."
+                )
+            if shift["Shift_Status"] != "Active":
+                raise ValueError(
+                    f"Future or ongoing duty assignment {assignment['Assignment_ID']} "
+                    f"references non-active Shift_ID {assignment['Shift_ID']}."
+                )
+        intervals_by_staff.setdefault(normalized_staff_id, []).append(
+            (start, end, assignment["Assignment_ID"])
+        )
+
+    for intervals in intervals_by_staff.values():
+        intervals.sort(key=lambda interval: (interval[0], interval[1]))
+        previous: tuple[datetime, datetime, str] | None = None
+        for current in intervals:
+            if previous is not None and _intervals_overlap(previous[:2], current[:2]):
+                raise ValueError(
+                    "Overlapping non-cancelled duty assignments for the same staff member: "
+                    f"{previous[2]} and {current[2]}."
+                )
+            if previous is None or current[1] > previous[1]:
+                previous = current
 
     attendance_assignments: set[str] = set()
     for _, attendance in records_by_sheet[ATTENDANCE_SHEET]:
@@ -670,30 +723,30 @@ def _prepare_appended_row(worksheet: Any, row_number: int, headers: tuple[str, .
             if source.number_format:
                 destination.number_format = source.number_format
 
-        # Extend column-scoped dropdowns when records exceed the template's
-        # preformatted rows, preserving the existing validation rules.
-        for validation in worksheet.data_validations.dataValidation:
-            updated_ranges = []
-            changed = False
-            for cell_range in validation.sqref.ranges:
-                if (
-                    cell_range.min_col == cell_range.max_col
-                    and cell_range.min_row <= 2
-                    and cell_range.max_row < row_number
-                ):
-                    updated_ranges.append(
-                        CellRange(
-                            min_col=cell_range.min_col,
-                            min_row=cell_range.min_row,
-                            max_col=cell_range.max_col,
-                            max_row=row_number,
-                        )
+    # Extend column-scoped dropdowns if this row falls outside their ranges,
+    # even when the worksheet has other preformatted rows beyond the table.
+    for validation in worksheet.data_validations.dataValidation:
+        updated_ranges = []
+        changed = False
+        for cell_range in validation.sqref.ranges:
+            if (
+                cell_range.min_col == cell_range.max_col
+                and cell_range.min_row <= 2
+                and cell_range.max_row < row_number
+            ):
+                updated_ranges.append(
+                    CellRange(
+                        min_col=cell_range.min_col,
+                        min_row=cell_range.min_row,
+                        max_col=cell_range.max_col,
+                        max_row=row_number,
                     )
-                    changed = True
-                else:
-                    updated_ranges.append(cell_range)
-            if changed:
-                validation.sqref = MultiCellRange(updated_ranges)
+                )
+                changed = True
+            else:
+                updated_ranges.append(cell_range)
+        if changed:
+            validation.sqref = MultiCellRange(updated_ranges)
 
     # Existing table definitions are preserved by openpyxl, but their ranges
     # must also grow when a record is written beyond the current table bounds.
