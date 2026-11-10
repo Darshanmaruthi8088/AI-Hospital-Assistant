@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import patient_store
-from rag_engine import answer_question
+from rag_engine import answer_patient_question, answer_question
 
 app = FastAPI(
     title="AI Hospital Information Assistant",
@@ -25,6 +25,7 @@ app.add_middleware(
 
 class QuestionRequest(BaseModel):
     question: str = Field(..., min_length=1)
+    patient_id: str | None = Field(default=None, min_length=1)
 
 
 class PatientCreateRequest(BaseModel):
@@ -179,18 +180,39 @@ def ask(request: QuestionRequest):
     if not question:
         raise HTTPException(status_code=422, detail="Question must not be blank.")
 
-    try:
-        result = answer_question(question)
-    except URLError as error:
-        raise HTTPException(
-            status_code=503,
-            detail="Could not connect to the local Ollama service.",
-        ) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail="The assistant could not process the question.",
-        ) from error
+    if request.patient_id is not None:
+        patient_id = request.patient_id.strip()
+        if not patient_id:
+            raise HTTPException(status_code=422, detail="Patient ID must not be blank.")
+        try:
+            patient = patient_store.get_patient(patient_id)
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=503,
+                detail="Patient record storage is unavailable or invalid.",
+            ) from error
+        if patient is None:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+        try:
+            result = answer_patient_question(question, patient)
+        except Exception as error:
+            raise HTTPException(
+                status_code=500,
+                detail="The patient assistant could not process the question.",
+            ) from error
+    else:
+        try:
+            result = answer_question(question)
+        except URLError as error:
+            raise HTTPException(
+                status_code=503,
+                detail="Could not connect to the local Ollama service.",
+            ) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=500,
+                detail="The assistant could not process the question.",
+            ) from error
 
     return {
         "question": question,

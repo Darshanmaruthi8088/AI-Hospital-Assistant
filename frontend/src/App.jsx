@@ -308,6 +308,7 @@ function App() {
         },
         body: JSON.stringify({
           question: submittedQuestion,
+          patient_id: selectedPatient?.Patient_ID || null,
         }),
       });
 
@@ -597,6 +598,13 @@ function App() {
                     onClick={() => setEditingPatient(!editingPatient)}
                   >
                     {editingPatient ? "Cancel Editing" : "Edit Patient"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActivePage("chat")}
+                  >
+                    Ask AI About This Patient
                   </button>
 
                   <button

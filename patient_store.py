@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 import threading
 from datetime import date, datetime
@@ -99,7 +100,20 @@ def _serialize_value(value: Any) -> Any:
 
 
 def _serialize_record(record: dict[str, Any]) -> dict[str, Any]:
-    return {field: _serialize_value(value) for field, value in record.items()}
+    serialized = {field: _serialize_value(value) for field, value in record.items()}
+    birth_value = record.get("Date_of_Birth")
+    if not _is_blank(birth_value):
+        birth_date = _parse_date("Date_of_Birth", birth_value)
+        today = date.today()
+        if birth_date > today:
+            raise ValueError("Date_of_Birth cannot be in the future.")
+        calculated_age = _calculate_age(birth_date, today)
+        if not 0 <= calculated_age <= 150:
+            raise ValueError(
+                "Age calculated from Date_of_Birth must be between 0 and 150."
+            )
+        serialized["Age"] = calculated_age
+    return serialized
 
 
 def read_patients() -> list[dict[str, Any]]:
@@ -199,7 +213,11 @@ def _clean_patient_data(patient_data: dict[str, Any]) -> dict[str, Any]:
         if field in DATE_FIELDS:
             cleaned[field] = _parse_date(field, value)
         elif field == "Age":
-            if _is_blank(value):
+            if _is_blank(value) or not _is_blank(
+                patient_data.get("Date_of_Birth")
+            ):
+                # Date of Birth is authoritative when supplied. The age is
+                # recalculated after all fields have been parsed.
                 cleaned[field] = None
                 continue
             if isinstance(value, bool):
@@ -234,11 +252,10 @@ def _clean_patient_data(patient_data: dict[str, Any]) -> dict[str, Any]:
     if birth_date is not None:
         if birth_date > date.today():
             raise ValueError("Date_of_Birth cannot be in the future.")
-        if cleaned.get("Age") is None:
-            calculated_age = _calculate_age(birth_date, date.today())
-            if not 0 <= calculated_age <= 150:
-                raise ValueError("Age calculated from Date_of_Birth must be between 0 and 150.")
-            cleaned["Age"] = calculated_age
+        calculated_age = _calculate_age(birth_date, date.today())
+        if not 0 <= calculated_age <= 150:
+            raise ValueError("Age calculated from Date_of_Birth must be between 0 and 150.")
+        cleaned["Age"] = calculated_age
 
     if cleaned.get("Registration_Date") is None:
         cleaned["Registration_Date"] = date.today()
@@ -386,11 +403,8 @@ def update_patient(
             }
             merged_data.update(patient_data)
 
-            # Recalculate age when the date of birth changes without an age.
-            if "Date_of_Birth" in patient_data and "Age" not in patient_data:
-                merged_data["Age"] = None
-
-            # Validate the complete updated record.
+            # Date of Birth is authoritative, so validation recalculates Age
+            # for every update, including updates to unrelated fields.
             cleaned_data = _clean_patient_data(merged_data)
             updated_record = {
                 "Patient_ID": existing_record["Patient_ID"]
@@ -560,6 +574,100 @@ def import_patients(file_content: bytes) -> dict[str, Any]:
     }
 
 
+def migrate_patient_ages() -> dict[str, Any]:
+    """Correct stored ages from DOB after creating a timestamped workbook backup.
+
+    This migration is opt-in and is not called during normal reads or API
+    requests. It makes no workbook changes when there are no ages to correct.
+    """
+    with _file_lock:
+        workbook, worksheet = _load_sheet()
+        try:
+            today = date.today()
+            patient_id_column = HEADERS.index("Patient_ID") + 1
+            birth_date_column = HEADERS.index("Date_of_Birth") + 1
+            age_column = HEADERS.index("Age") + 1
+            corrections: list[tuple[int, int]] = []
+            unchanged = 0
+            without_birth_date = 0
+
+            for row_number in range(2, worksheet.max_row + 1):
+                values = [
+                    worksheet.cell(row=row_number, column=column).value
+                    for column in range(1, len(HEADERS) + 1)
+                ]
+                if all(_is_blank(value) for value in values):
+                    continue
+
+                if _is_blank(values[patient_id_column - 1]):
+                    raise ValueError(
+                        f"Populated row {row_number} is missing Patient_ID."
+                    )
+
+                raw_birth_date = values[birth_date_column - 1]
+                if _is_blank(raw_birth_date):
+                    without_birth_date += 1
+                    continue
+
+                try:
+                    birth_date = _parse_date("Date_of_Birth", raw_birth_date)
+                except ValueError as error:
+                    raise ValueError(
+                        f"Invalid Date_of_Birth in row {row_number}: {error}"
+                    ) from error
+
+                if birth_date is None:
+                    without_birth_date += 1
+                    continue
+                if birth_date > today:
+                    raise ValueError(
+                        f"Date_of_Birth in row {row_number} cannot be in the future."
+                    )
+
+                calculated_age = _calculate_age(birth_date, today)
+                if not 0 <= calculated_age <= 150:
+                    raise ValueError(
+                        f"Calculated age in row {row_number} must be between 0 and 150."
+                    )
+
+                current_age = values[age_column - 1]
+                if type(current_age) is int and current_age == calculated_age:
+                    unchanged += 1
+                else:
+                    corrections.append((row_number, calculated_age))
+
+            backup_path: Path | None = None
+            if corrections:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                backup_path = EXCEL_FILE.with_name(
+                    f"{EXCEL_FILE.stem}.age-backup-{timestamp}{EXCEL_FILE.suffix}"
+                )
+                suffix = 1
+                while backup_path.exists():
+                    backup_path = EXCEL_FILE.with_name(
+                        f"{EXCEL_FILE.stem}.age-backup-{timestamp}-{suffix}"
+                        f"{EXCEL_FILE.suffix}"
+                    )
+                    suffix += 1
+
+                # Keep an untouched copy before changing any workbook cells.
+                shutil.copy2(EXCEL_FILE, backup_path)
+                for row_number, calculated_age in corrections:
+                    worksheet.cell(row=row_number, column=age_column).value = (
+                        calculated_age
+                    )
+                _save_workbook(workbook)
+
+            return {
+                "updated": len(corrections),
+                "unchanged": unchanged,
+                "without_birth_date": without_birth_date,
+                "backup": str(backup_path) if backup_path is not None else None,
+            }
+        finally:
+            workbook.close()
+
+
 __all__ = [
     "EDITABLE_FIELDS",
     "EXCEL_FILE",
@@ -567,6 +675,7 @@ __all__ = [
     "get_patient",
     "import_patients",
     "list_patients",
+    "migrate_patient_ages",
     "read_patients",
     "register_patient",
     "update_patient",

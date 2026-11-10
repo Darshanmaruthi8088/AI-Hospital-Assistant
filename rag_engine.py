@@ -271,22 +271,73 @@ def answer_patient_question(question: str, patient: dict) -> dict:
     if not isinstance(patient, dict):
         raise ValueError("A valid patient record is required.")
 
+    normalized_query = " ".join(re.findall(r"[a-z0-9]+", query.casefold()))
+    query_words = set(normalized_query.split())
+    requested_fields = []
+
+    if query_words.intersection({"note", "notes"}):
+        return _result(
+            "This information is not available through AI access.",
+            validation_status="not_applicable",
+        )
+
+    if query_words.intersection({"doctor", "physician", "consultant"}):
+        requested_fields.append(("Doctor_Assigned", "Assigned Doctor"))
+    if "department" in query_words:
+        requested_fields.append(("Department", "Department"))
+    if (
+        query_words.intersection({"contact", "phone", "telephone", "mobile", "cell"})
+        and "emergency" not in query_words
+    ):
+        requested_fields.append(("Contact_Number", "Contact Number"))
+    if "age" in query_words or {"how", "old"}.issubset(query_words):
+        requested_fields.append(("Age", "Age"))
+    if "name" in query_words and not query_words.intersection({"doctor", "emergency"}):
+        requested_fields.append(("Full_Name", "Full Name"))
+    if query_words.intersection({"birth", "birthday", "born", "dob"}):
+        requested_fields.append(("Date_of_Birth", "Date of Birth"))
+    if query_words.intersection({"registration", "register", "registered"}):
+        requested_fields.append(("Registration_Date", "Registration Date"))
+    if query_words.intersection({"gender", "sex"}):
+        requested_fields.append(("Gender", "Gender"))
+    if "visit" in query_words:
+        requested_fields.append(("Visit_Type", "Visit Type"))
+    if query_words.intersection({"status", "active", "inactive"}):
+        requested_fields.append(("Record_Status", "Record Status"))
+
+    if len(requested_fields) == 1:
+        field, label = requested_fields[0]
+        value = patient.get(field)
+        patient_id = patient.get("Patient_ID", "unknown")
+        if value is None or not str(value).strip():
+            answer = "That information is not available in this patient's record."
+            source_text = f"{label}: [empty in record]"
+        else:
+            value = str(value).strip()
+            answer = value
+            source_text = f"{label}: {value}"
+
+        return _result(
+            answer,
+            sources=[{
+                "source_id": "P1",
+                "filename": f"Patient record {patient_id}",
+                "text": source_text,
+            }],
+            validation_status="verified",
+        )
+
     patient_fields = {
-        "Patient ID": "Patient_ID",
         "Full Name": "Full_Name",
         "Date of Birth": "Date_of_Birth",
         "Age": "Age",
         "Gender": "Gender",
         "Contact Number": "Contact_Number",
-        "Address": "Address",
-        "Emergency Contact Name": "Emergency_Contact_Name",
-        "Emergency Contact Number": "Emergency_Contact_Number",
         "Department": "Department",
         "Assigned Doctor": "Doctor_Assigned",
         "Registration Date": "Registration_Date",
         "Visit Type": "Visit_Type",
         "Record Status": "Record_Status",
-        "Notes": "Notes",
     }
     patient_context = "\n".join(
         f"{label}: {patient[field]}"
