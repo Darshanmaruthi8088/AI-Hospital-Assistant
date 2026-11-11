@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 import threading
 from copy import copy
@@ -14,6 +15,7 @@ from zipfile import BadZipFile
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.cell_range import CellRange, MultiCellRange
+from openpyxl.worksheet.table import TableColumn
 from openpyxl.utils.exceptions import InvalidFileException
 
 
@@ -58,7 +60,10 @@ ASSIGNMENT_HEADERS = (
     "Assigned_By",
     "Assignment_Status",
     "Notes",
+    "Cancelled_By",
+    "Cancellation_Reason",
 )
+_LEGACY_ASSIGNMENT_HEADERS = ASSIGNMENT_HEADERS[:-2]
 ATTENDANCE_HEADERS = (
     "Attendance_ID",
     "Assignment_ID",
@@ -366,6 +371,13 @@ def _clean_shift_data(shift_data: dict[str, Any]) -> dict[str, Any]:
 
 def _clean_assignment_data(assignment_data: dict[str, Any]) -> dict[str, Any]:
     _check_payload(assignment_data, _ASSIGNMENT_EDITABLE, "duty assignment")
+    if any(
+        field in assignment_data
+        for field in ("Cancelled_By", "Cancellation_Reason")
+    ):
+        raise ValueError(
+            "Cancellation metadata can only be set when cancelling an existing assignment."
+        )
     cleaned: dict[str, Any] = {field: None for field in _ASSIGNMENT_EDITABLE}
     for field, value in assignment_data.items():
         if field == "Duty_Date":
@@ -804,6 +816,152 @@ def _save_workbook(workbook: Any) -> None:
             temporary_path.unlink()
 
 
+def migrate_duty_assignment_cancellation_schema() -> str | None:
+    """Add cancellation metadata columns, backing up the workbook first.
+
+    Returns the backup path when a migration was applied, or ``None`` when the
+    workbook already has the current schema. The operation is idempotent.
+    """
+    with _file_lock:
+        if not EXCEL_FILE.is_file():
+            raise FileNotFoundError(f"Staff-record workbook not found: {EXCEL_FILE}")
+
+        try:
+            workbook = load_workbook(EXCEL_FILE)
+        except (BadZipFile, EOFError, InvalidFileException) as error:
+            raise ValueError("The staff-record workbook is corrupt or unsupported.") from error
+
+        backup_path: Path | None = None
+        try:
+            missing_sheets = set(REQUIRED_SHEETS) - set(workbook.sheetnames)
+            if missing_sheets:
+                missing = ", ".join(sorted(missing_sheets))
+                raise ValueError(
+                    f"Staff-record workbook is missing worksheet(s): {missing}."
+                )
+
+            worksheet = workbook[ASSIGNMENTS_SHEET]
+            actual_headers = tuple(
+                worksheet.cell(row=1, column=column).value
+                for column in range(1, len(ASSIGNMENT_HEADERS) + 1)
+            )
+            if actual_headers == ASSIGNMENT_HEADERS:
+                for sheet_name, headers in SHEET_HEADERS.items():
+                    _validate_headers(workbook[sheet_name], headers)
+                _validate_workbook_integrity(workbook)
+                workbook.close()
+                return None
+            if actual_headers[: len(_LEGACY_ASSIGNMENT_HEADERS)] != _LEGACY_ASSIGNMENT_HEADERS:
+                raise ValueError(
+                    "The 'Duty Assignments' sheet does not match either the legacy "
+                    "or current cancellation schema. No changes were made."
+                )
+            if any(
+                not _is_blank(worksheet.cell(row=1, column=column).value)
+                for column in range(len(_LEGACY_ASSIGNMENT_HEADERS) + 1, worksheet.max_column + 1)
+            ):
+                raise ValueError(
+                    "Unexpected existing headers follow the Duty Assignments columns. "
+                    "No changes were made."
+                )
+            if any(
+                not _is_blank(worksheet.cell(row=row, column=column).value)
+                for row in range(1, worksheet.max_row + 1)
+                for column in range(len(_LEGACY_ASSIGNMENT_HEADERS) + 1, len(ASSIGNMENT_HEADERS) + 1)
+            ):
+                raise ValueError(
+                    "The new cancellation columns already contain data. "
+                    "No changes were made."
+                )
+
+            for sheet_name, headers in SHEET_HEADERS.items():
+                if sheet_name == ASSIGNMENTS_SHEET:
+                    continue
+                _validate_headers(workbook[sheet_name], headers)
+
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            backup_path = EXCEL_FILE.with_name(
+                f"{EXCEL_FILE.stem}.pre-cancellation-{timestamp}{EXCEL_FILE.suffix}"
+            )
+            if backup_path.exists():
+                raise FileExistsError(f"Workbook backup already exists: {backup_path}")
+            shutil.copy2(EXCEL_FILE, backup_path)
+
+            last_row = max(worksheet.max_row, 2)
+            style_source_column = len(_LEGACY_ASSIGNMENT_HEADERS)
+            for column, header in enumerate(
+                ASSIGNMENT_HEADERS[len(_LEGACY_ASSIGNMENT_HEADERS) :],
+                start=len(_LEGACY_ASSIGNMENT_HEADERS) + 1,
+            ):
+                worksheet.cell(row=1, column=column, value=header)
+                for row in range(1, last_row + 1):
+                    source = worksheet.cell(row=row, column=style_source_column)
+                    destination = worksheet.cell(row=row, column=column)
+                    if source.has_style:
+                        destination._style = copy(source._style)
+                    if source.number_format:
+                        destination.number_format = source.number_format
+                worksheet.column_dimensions[worksheet.cell(row=1, column=column).column_letter].width = (
+                    22 if header == "Cancelled_By" else 38
+                )
+
+            if worksheet.auto_filter.ref:
+                filter_range = CellRange(worksheet.auto_filter.ref)
+                if (
+                    filter_range.min_col == 1
+                    and filter_range.max_col == len(_LEGACY_ASSIGNMENT_HEADERS)
+                ):
+                    filter_range.max_col = len(ASSIGNMENT_HEADERS)
+                    worksheet.auto_filter.ref = str(filter_range)
+
+            for table in worksheet.tables.values():
+                table_range = CellRange(table.ref)
+                if (
+                    table_range.min_row != 1
+                    or table_range.min_col != 1
+                    or table_range.max_col != len(_LEGACY_ASSIGNMENT_HEADERS)
+                ):
+                    continue
+                table_headers = tuple(
+                    worksheet.cell(row=1, column=column).value
+                    for column in range(1, len(_LEGACY_ASSIGNMENT_HEADERS) + 1)
+                )
+                if table_headers != _LEGACY_ASSIGNMENT_HEADERS:
+                    raise ValueError(
+                        f"Table {table.displayName!r} does not match the assignment headers. "
+                        "No changes were made."
+                    )
+                table_columns = list(table.tableColumns)
+                next_id = max((column.id for column in table_columns), default=0) + 1
+                for header in ASSIGNMENT_HEADERS[len(_LEGACY_ASSIGNMENT_HEADERS) :]:
+                    table_columns.append(TableColumn(id=next_id, name=header))
+                    next_id += 1
+                table.tableColumns = table_columns
+                table_range.max_col = len(ASSIGNMENT_HEADERS)
+                table.ref = str(table_range)
+                if table.autoFilter is not None:
+                    table.autoFilter.ref = table.ref
+
+            _save_workbook(workbook)
+        except Exception:
+            workbook.close()
+            raise
+        else:
+            workbook.close()
+
+        try:
+            verified_workbook = _load_workbook()
+            verified_workbook.close()
+        except Exception as error:
+            shutil.copy2(backup_path, EXCEL_FILE)
+            raise ValueError(
+                "Cancellation schema migration failed validation; the workbook was "
+                f"restored from its backup at {backup_path}."
+            ) from error
+
+        return str(backup_path)
+
+
 def register_staff(staff_data: dict[str, Any]) -> dict[str, Any]:
     """Validate and append a staff member with a generated Staff_ID."""
     _check_payload(staff_data, _STAFF_EDITABLE, "staff")
@@ -1051,6 +1209,64 @@ def list_duty_assignments() -> list[dict[str, Any]]:
 def get_duty_assignment(assignment_id: str) -> dict[str, Any] | None:
     """Return one duty assignment by case-insensitive Assignment_ID."""
     return _get_record(ASSIGNMENTS_SHEET, "Assignment_ID", assignment_id)
+
+
+def cancel_duty_assignment(
+    assignment_id: str,
+    cancelled_by: str,
+    cancellation_reason: str,
+) -> dict[str, Any] | None:
+    """Cancel an Assigned duty assignment in place and record who/why."""
+    actor = _parse_text("Cancelled_By", cancelled_by, required=True)
+    reason = _parse_text("Cancellation_Reason", cancellation_reason, required=True)
+    wanted = _normalize_id(assignment_id, "Assignment_ID")
+
+    with _file_lock:
+        workbook = _load_workbook()
+        try:
+            match = _find_by_id(
+                _scan_records(workbook, ASSIGNMENTS_SHEET),
+                "Assignment_ID",
+                wanted,
+            )
+            if match is None:
+                return None
+
+            row_number, existing = match
+            status = existing["Assignment_Status"]
+            if status != "Assigned":
+                if status == "Cancelled":
+                    raise ValueError("This duty assignment has already been cancelled.")
+                if status == "Completed":
+                    raise ValueError("Completed duty assignments cannot be cancelled.")
+                raise ValueError("Only Assigned duty assignments can be cancelled.")
+
+            worksheet = workbook[ASSIGNMENTS_SHEET]
+            worksheet.cell(
+                row=row_number,
+                column=ASSIGNMENT_HEADERS.index("Assignment_Status") + 1,
+                value="Cancelled",
+            )
+            worksheet.cell(
+                row=row_number,
+                column=ASSIGNMENT_HEADERS.index("Cancelled_By") + 1,
+                value=actor,
+            )
+            worksheet.cell(
+                row=row_number,
+                column=ASSIGNMENT_HEADERS.index("Cancellation_Reason") + 1,
+                value=reason,
+            )
+            _save_workbook(workbook)
+            cancelled = {
+                **existing,
+                "Assignment_Status": "Cancelled",
+                "Cancelled_By": actor,
+                "Cancellation_Reason": reason,
+            }
+            return _serialize_record(ASSIGNMENTS_SHEET, cancelled)
+        finally:
+            workbook.close()
 
 
 def create_duty_assignment(
@@ -1351,6 +1567,7 @@ __all__ = [
     "STAFF_SHEET",
     "create_duty_assignment",
     "create_shift",
+    "cancel_duty_assignment",
     "correct_attendance",
     "get_attendance",
     "get_duty_assignment",
@@ -1360,6 +1577,7 @@ __all__ = [
     "list_duty_assignments",
     "list_shifts",
     "list_staff",
+    "migrate_duty_assignment_cancellation_schema",
     "read_attendance",
     "read_duty_assignments",
     "read_shifts",

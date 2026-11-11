@@ -107,6 +107,11 @@ class DutyAssignmentCreateRequest(DutyAssignmentFields):
     Shift_ID: str = Field(..., min_length=1, max_length=32767)
 
 
+class DutyAssignmentCancelRequest(APIRequestModel):
+    Cancelled_By: str = Field(..., min_length=1, max_length=32767)
+    Cancellation_Reason: str = Field(..., min_length=1, max_length=32767)
+
+
 class AttendanceFields(APIRequestModel):
     Assignment_ID: str | None = Field(default=None, max_length=32767)
     Staff_ID: str | None = Field(default=None, max_length=32767)
@@ -414,6 +419,29 @@ def create_duty_assignment_record(request: DutyAssignmentCreateRequest):
         return staff_store.create_duty_assignment(
             request.model_dump(exclude_unset=True)
         )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Duty assignment storage is unavailable.",
+        ) from error
+
+
+@app.post("/duty-assignments/{assignment_id}/cancel")
+def cancel_duty_assignment_record(
+    assignment_id: str,
+    request: DutyAssignmentCancelRequest,
+):
+    try:
+        assignment = staff_store.cancel_duty_assignment(
+            assignment_id,
+            request.Cancelled_By,
+            request.Cancellation_Reason,
+        )
+        if assignment is None:
+            raise HTTPException(status_code=404, detail="Duty assignment not found.")
+        return assignment
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except OSError as error:
