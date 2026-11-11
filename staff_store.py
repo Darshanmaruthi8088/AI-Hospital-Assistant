@@ -940,7 +940,11 @@ def migrate_duty_assignment_cancellation_schema() -> str | None:
                 table_range.max_col = len(ASSIGNMENT_HEADERS)
                 table.ref = str(table_range)
                 if table.autoFilter is not None:
-                    table.autoFilter.ref = table.ref
+                    filter_range = CellRange(
+                        table.autoFilter.ref or str(table_range)
+                    )
+                    filter_range.max_col = len(ASSIGNMENT_HEADERS)
+                    table.autoFilter.ref = str(filter_range)
 
             _save_workbook(workbook)
         except Exception:

@@ -1,7 +1,68 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
+const localDateValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseLocalDate = (value) => new Date(`${value}T12:00:00`);
+
+const formatRosterDate = (value, options = { dateStyle: "medium" }) =>
+  value
+    ? new Intl.DateTimeFormat(undefined, options).format(parseLocalDate(value))
+    : "—";
+
+const getRosterRange = (dateValue, mode) => {
+  const anchor = parseLocalDate(dateValue);
+  let start = new Date(anchor);
+  let end = new Date(anchor);
+
+  if (mode === "Weekly") {
+    const daysSinceMonday = (anchor.getDay() + 6) % 7;
+    start.setDate(anchor.getDate() - daysSinceMonday);
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  } else if (mode === "Monthly") {
+    start = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12);
+    end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 12);
+  }
+
+  return { start: localDateValue(start), end: localDateValue(end) };
+};
+
+const responseErrorMessage = (payload, fallback) => {
+  if (Array.isArray(payload?.detail)) {
+    return payload.detail
+      .map((item) => item.msg || JSON.stringify(item))
+      .join("; ");
+  }
+  return payload?.detail || fallback;
+};
+
+const formatAttendanceDateTime = (value) => {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+};
+
+const formatDateTimeInput = (value) =>
+  value
+    ? String(value).length >= 19
+      ? String(value).slice(0, 19)
+      : String(value).slice(0, 16)
+    : "";
+
 function App() {
+  const attendanceRecordLock = useRef(false);
+  const attendanceCorrectionLock = useRef(false);
   const [question, setQuestion] = useState("");
   const [activePage, setActivePage] = useState("dashboard");
   const [patients, setPatients] = useState([]);
@@ -38,6 +99,53 @@ function App() {
   const [selectedShift, setSelectedShift] = useState(null);
   const [savingShift, setSavingShift] = useState(false);
   const [shiftFormMessage, setShiftFormMessage] = useState("");
+  const [dutyAssignments, setDutyAssignments] = useState([]);
+  const [dutyStaff, setDutyStaff] = useState([]);
+  const [dutyShifts, setDutyShifts] = useState([]);
+  const [dutyLoading, setDutyLoading] = useState(false);
+  const [dutyError, setDutyError] = useState("");
+  const [dutyRefreshKey, setDutyRefreshKey] = useState(0);
+  const [dutyViewMode, setDutyViewMode] = useState("Weekly");
+  const [dutyViewDate, setDutyViewDate] = useState(() => localDateValue(new Date()));
+  const [dutyDateFromFilter, setDutyDateFromFilter] = useState("");
+  const [dutyDateToFilter, setDutyDateToFilter] = useState("");
+  const [dutyStaffFilter, setDutyStaffFilter] = useState("");
+  const [dutyDepartmentFilter, setDutyDepartmentFilter] = useState("");
+  const [dutyShiftFilter, setDutyShiftFilter] = useState("");
+  const [dutyStatusFilter, setDutyStatusFilter] = useState("All");
+  const [dutyFormOpen, setDutyFormOpen] = useState(false);
+  const [savingDutyAssignment, setSavingDutyAssignment] = useState(false);
+  const [dutyFormMessage, setDutyFormMessage] = useState("");
+  const [cancellationAssignment, setCancellationAssignment] = useState(null);
+  const [cancellationReviewOpen, setCancellationReviewOpen] = useState(false);
+  const [cancellationActor, setCancellationActor] = useState("");
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [cancellationError, setCancellationError] = useState("");
+  const [savingCancellation, setSavingCancellation] = useState(false);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [attendanceAssignments, setAttendanceAssignments] = useState([]);
+  const [attendanceStaff, setAttendanceStaff] = useState([]);
+  const [attendanceShifts, setAttendanceShifts] = useState([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
+  const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
+  const [attendanceDateFromFilter, setAttendanceDateFromFilter] = useState("");
+  const [attendanceDateToFilter, setAttendanceDateToFilter] = useState("");
+  const [attendanceStaffFilter, setAttendanceStaffFilter] = useState("");
+  const [attendanceDepartmentFilter, setAttendanceDepartmentFilter] = useState("");
+  const [attendanceShiftFilter, setAttendanceShiftFilter] = useState("");
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("All");
+  const [attendanceFormOpen, setAttendanceFormOpen] = useState(false);
+  const [attendanceAssignmentId, setAttendanceAssignmentId] = useState("");
+  const [attendanceFormStatus, setAttendanceFormStatus] = useState("Present");
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const [attendanceFormMessage, setAttendanceFormMessage] = useState("");
+  const [attendanceEditing, setAttendanceEditing] = useState(null);
+  const [attendanceCorrectionStatus, setAttendanceCorrectionStatus] = useState("Present");
+  const [savingAttendanceCorrection, setSavingAttendanceCorrection] = useState(false);
+  const [attendanceCorrectionMessage, setAttendanceCorrectionMessage] = useState("");
+  const [attendanceFeedback, setAttendanceFeedback] = useState("");
+  const [attendanceFeedbackType, setAttendanceFeedbackType] = useState("success");
 
   const handleViewPatient = async (patientId) => {
     setPatientDetailsLoading(true);
@@ -413,6 +521,119 @@ function App() {
     return () => controller.abort();
   }, [activePage, shiftRefreshKey]);
 
+  useEffect(() => {
+    if (activePage !== "duty-roster") return;
+
+    const controller = new AbortController();
+    const loadRosterData = async () => {
+      setDutyLoading(true);
+      setDutyError("");
+
+      try {
+        const endpoints = ["/duty-assignments", "/staff", "/shifts"];
+        const responses = await Promise.all(
+          endpoints.map((endpoint) =>
+            fetch(`http://127.0.0.1:8000${endpoint}`, {
+              signal: controller.signal,
+            })
+          )
+        );
+        const payloads = await Promise.all(
+          responses.map((response) => response.json().catch(() => ({})))
+        );
+
+        const invalidResponse = responses.findIndex((response) => !response.ok);
+        if (invalidResponse !== -1) {
+          throw new Error(
+            responseErrorMessage(
+              payloads[invalidResponse],
+              `Failed to retrieve ${endpoints[invalidResponse].slice(1)}.`
+            )
+          );
+        }
+
+        if (payloads.some((payload) => !Array.isArray(payload))) {
+          throw new Error("The backend returned invalid roster, staff, or shift data.");
+        }
+
+        setDutyAssignments(payloads[0]);
+        setDutyStaff(payloads[1]);
+        setDutyShifts(payloads[2]);
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        setDutyError(
+          error.message === "Failed to fetch"
+            ? "Cannot connect to the backend. Check whether FastAPI is running."
+            : error.message
+        );
+      } finally {
+        if (!controller.signal.aborted) setDutyLoading(false);
+      }
+    };
+
+    loadRosterData();
+    return () => controller.abort();
+  }, [activePage, dutyRefreshKey]);
+
+  useEffect(() => {
+    if (activePage !== "attendance") return;
+
+    const controller = new AbortController();
+    const loadAttendanceData = async () => {
+      setAttendanceLoading(true);
+      setAttendanceError("");
+
+      try {
+        const endpoints = [
+          "/attendance",
+          "/duty-assignments",
+          "/staff",
+          "/shifts",
+        ];
+        const responses = await Promise.all(
+          endpoints.map((endpoint) =>
+            fetch(`http://127.0.0.1:8000${endpoint}`, {
+              signal: controller.signal,
+            })
+          )
+        );
+        const payloads = await Promise.all(
+          responses.map((response) => response.json().catch(() => ({})))
+        );
+
+        const failedIndex = responses.findIndex((response) => !response.ok);
+        if (failedIndex !== -1) {
+          throw new Error(
+            responseErrorMessage(
+              payloads[failedIndex],
+              `Failed to retrieve ${endpoints[failedIndex].slice(1)}.`
+            )
+          );
+        }
+        if (payloads.some((payload) => !Array.isArray(payload))) {
+          throw new Error("The backend returned invalid attendance or roster data.");
+        }
+
+        setAttendanceRecords(payloads[0]);
+        setAttendanceAssignments(payloads[1]);
+        setAttendanceStaff(payloads[2]);
+        setAttendanceShifts(payloads[3]);
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        setAttendanceError(
+          error.message === "Failed to fetch"
+            ? "Cannot connect to the backend. Check whether FastAPI is running."
+            : error.message
+        );
+      } finally {
+        if (!controller.signal.aborted) setAttendanceLoading(false);
+      }
+    };
+
+    loadAttendanceData();
+    return () => controller.abort();
+  }, [activePage, attendanceRefreshKey]);
+
   const handleSaveStaff = async (event) => {
     event.preventDefault();
 
@@ -609,6 +830,483 @@ function App() {
   const formatShiftTimeInput = (value) =>
     value ? String(value).slice(0, 8) : "";
 
+  const activeDutyStaff = dutyStaff.filter(
+    (staffMember) => staffMember.Employment_Status === "Active"
+  );
+  const activeDutyShifts = dutyShifts.filter(
+    (shift) => shift.Shift_Status === "Active"
+  );
+  const dutyStaffById = new Map(
+    dutyStaff.map((staffMember) => [
+      String(staffMember.Staff_ID || "").toLowerCase(),
+      staffMember,
+    ])
+  );
+  const dutyShiftById = new Map(
+    dutyShifts.map((shift) => [String(shift.Shift_ID || "").toLowerCase(), shift])
+  );
+  const dutyDepartments = [
+    ...new Set(
+      dutyStaff
+        .map((staffMember) => staffMember.Department?.trim())
+        .filter(Boolean)
+    ),
+  ].sort((first, second) => first.localeCompare(second));
+  const dutyViewRange = getRosterRange(dutyViewDate, dutyViewMode);
+  const dutyDateRangeInvalid = Boolean(
+    dutyDateFromFilter &&
+      dutyDateToFilter &&
+      dutyDateFromFilter > dutyDateToFilter
+  );
+  const visibleDutyAssignments = dutyAssignments
+    .filter((assignment) => {
+      const assignmentDate = assignment.Duty_Date;
+      const staffMember = dutyStaffById.get(
+        String(assignment.Staff_ID || "").toLowerCase()
+      );
+      const shift = dutyShiftById.get(
+        String(assignment.Shift_ID || "").toLowerCase()
+      );
+
+      return (
+        assignmentDate >= dutyViewRange.start &&
+        assignmentDate <= dutyViewRange.end &&
+        (!dutyDateFromFilter || assignmentDate >= dutyDateFromFilter) &&
+        (!dutyDateToFilter || assignmentDate <= dutyDateToFilter) &&
+        (!dutyStaffFilter || assignment.Staff_ID === dutyStaffFilter) &&
+        (!dutyDepartmentFilter || staffMember?.Department === dutyDepartmentFilter) &&
+        (!dutyShiftFilter || assignment.Shift_ID === dutyShiftFilter) &&
+        (dutyStatusFilter === "All" ||
+          assignment.Assignment_Status === dutyStatusFilter)
+      );
+    })
+    .sort((first, second) => {
+      const dateOrder = String(first.Duty_Date || "").localeCompare(
+        String(second.Duty_Date || "")
+      );
+      if (dateOrder !== 0) return dateOrder;
+      const firstShift = dutyShiftById.get(
+        String(first.Shift_ID || "").toLowerCase()
+      );
+      const secondShift = dutyShiftById.get(
+        String(second.Shift_ID || "").toLowerCase()
+      );
+      return String(firstShift?.Start_Time || "").localeCompare(
+        String(secondShift?.Start_Time || "")
+      );
+    });
+
+  const attendanceStaffById = new Map(
+    attendanceStaff.map((staffMember) => [
+      String(staffMember.Staff_ID || "").toLowerCase(),
+      staffMember,
+    ])
+  );
+  const attendanceShiftById = new Map(
+    attendanceShifts.map((shift) => [
+      String(shift.Shift_ID || "").toLowerCase(),
+      shift,
+    ])
+  );
+  const attendanceAssignmentById = new Map(
+    attendanceAssignments.map((assignment) => [
+      String(assignment.Assignment_ID || "").toLowerCase(),
+      assignment,
+    ])
+  );
+  const attendanceDepartments = [
+    ...new Set(
+      attendanceStaff
+        .map((staffMember) => staffMember.Department?.trim())
+        .filter(Boolean)
+    ),
+  ].sort((first, second) => first.localeCompare(second));
+  const recordedAssignmentIds = new Set(
+    attendanceRecords.map((record) =>
+      String(record.Assignment_ID || "").toLowerCase()
+    )
+  );
+  const eligibleAttendanceAssignments = attendanceAssignments.filter(
+    (assignment) =>
+      assignment.Assignment_Status !== "Cancelled" &&
+      !recordedAssignmentIds.has(
+        String(assignment.Assignment_ID || "").toLowerCase()
+      )
+  );
+  const selectedAttendanceAssignment = attendanceAssignmentById.get(
+    attendanceAssignmentId.toLowerCase()
+  );
+  const selectedAttendanceStaff = selectedAttendanceAssignment
+    ? attendanceStaffById.get(
+        String(selectedAttendanceAssignment.Staff_ID || "").toLowerCase()
+      )
+    : null;
+  const selectedAttendanceShift = selectedAttendanceAssignment
+    ? attendanceShiftById.get(
+        String(selectedAttendanceAssignment.Shift_ID || "").toLowerCase()
+      )
+    : null;
+  const attendanceDateRangeInvalid = Boolean(
+    attendanceDateFromFilter &&
+      attendanceDateToFilter &&
+      attendanceDateFromFilter > attendanceDateToFilter
+  );
+  const visibleAttendanceRecords = attendanceRecords
+    .filter((record) => {
+      const staffMember = attendanceStaffById.get(
+        String(record.Staff_ID || "").toLowerCase()
+      );
+      const assignment = attendanceAssignmentById.get(
+        String(record.Assignment_ID || "").toLowerCase()
+      );
+
+      return (
+        (!attendanceDateFromFilter || record.Duty_Date >= attendanceDateFromFilter) &&
+        (!attendanceDateToFilter || record.Duty_Date <= attendanceDateToFilter) &&
+        (!attendanceStaffFilter || record.Staff_ID === attendanceStaffFilter) &&
+        (!attendanceDepartmentFilter ||
+          staffMember?.Department === attendanceDepartmentFilter) &&
+        (!attendanceShiftFilter || assignment?.Shift_ID === attendanceShiftFilter) &&
+        (attendanceStatusFilter === "All" ||
+          record.Attendance_Status === attendanceStatusFilter)
+      );
+    })
+    .sort((first, second) =>
+      String(second.Duty_Date || "").localeCompare(String(first.Duty_Date || ""))
+    );
+  const attendanceStatusCounts = Object.fromEntries(
+    ["Present", "Late", "Absent", "Half-day", "On Leave"].map((status) => [
+      status,
+      attendanceRecords.filter((record) => record.Attendance_Status === status).length,
+    ])
+  );
+
+  const moveDutyView = (direction) => {
+    setDutyViewDate((currentValue) => {
+      const currentDate = parseLocalDate(currentValue);
+      if (dutyViewMode === "Monthly") {
+        return localDateValue(
+          new Date(
+            currentDate.getFullYear(),
+            currentDate.getMonth() + direction,
+            1,
+            12
+          )
+        );
+      }
+      currentDate.setDate(
+        currentDate.getDate() + direction * (dutyViewMode === "Weekly" ? 7 : 1)
+      );
+      return localDateValue(currentDate);
+    });
+  };
+
+  const openDutyAssignmentForm = () => {
+    setDutyFormMessage("");
+    setDutyFormOpen(true);
+  };
+
+  const handleCreateDutyAssignment = async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const assignmentData = {
+      Staff_ID: String(formData.get("Staff_ID") || "").trim(),
+      Duty_Date: String(formData.get("Duty_Date") || "").trim(),
+      Shift_ID: String(formData.get("Shift_ID") || "").trim(),
+      Assigned_By: String(formData.get("Assigned_By") || "").trim() || null,
+      Notes: String(formData.get("Notes") || "").trim() || null,
+    };
+
+    if (!assignmentData.Staff_ID || !assignmentData.Duty_Date || !assignmentData.Shift_ID) {
+      setDutyFormMessage("Staff member, duty date, and shift are required.");
+      return;
+    }
+    if (!activeDutyStaff.some((staffMember) => staffMember.Staff_ID === assignmentData.Staff_ID)) {
+      setDutyFormMessage("Choose an active staff member.");
+      return;
+    }
+    if (!activeDutyShifts.some((shift) => shift.Shift_ID === assignmentData.Shift_ID)) {
+      setDutyFormMessage("Choose an active shift.");
+      return;
+    }
+
+    setSavingDutyAssignment(true);
+    setDutyFormMessage("");
+    try {
+      const response = await fetch("http://127.0.0.1:8000/duty-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(assignmentData),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseErrorMessage(result, "Unable to create the duty assignment.")
+        );
+      }
+
+      setDutyFormOpen(false);
+      setDutyFormMessage(
+        `Assignment ${result.Assignment_ID} created successfully.`
+      );
+      setDutyRefreshKey((current) => current + 1);
+    } catch (error) {
+      setDutyFormMessage(
+        error.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : error.message
+      );
+    } finally {
+      setSavingDutyAssignment(false);
+    }
+  };
+
+  const openCancellationForm = (assignment) => {
+    setCancellationAssignment(assignment);
+    setCancellationReviewOpen(false);
+    setCancellationActor("");
+    setCancellationReason("");
+    setCancellationError("");
+  };
+
+  const closeCancellationForm = () => {
+    if (savingCancellation) return;
+    setCancellationAssignment(null);
+    setCancellationReviewOpen(false);
+    setCancellationActor("");
+    setCancellationReason("");
+    setCancellationError("");
+  };
+
+  const reviewCancellation = (event) => {
+    event.preventDefault();
+    if (!cancellationActor.trim() || !cancellationReason.trim()) {
+      setCancellationError("Cancelled By and Cancellation Reason are required.");
+      return;
+    }
+    setCancellationError("");
+    setCancellationReviewOpen(true);
+  };
+
+  const confirmDutyCancellation = async () => {
+    if (!cancellationAssignment) return;
+    setSavingCancellation(true);
+    setCancellationError("");
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/duty-assignments/${encodeURIComponent(cancellationAssignment.Assignment_ID)}/cancel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            Cancelled_By: cancellationActor.trim(),
+            Cancellation_Reason: cancellationReason.trim(),
+          }),
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseErrorMessage(result, "Unable to cancel the duty assignment.")
+        );
+      }
+
+      setCancellationAssignment(null);
+      setCancellationReviewOpen(false);
+      setDutyFormMessage(`Assignment ${result.Assignment_ID} was cancelled.`);
+      setDutyRefreshKey((current) => current + 1);
+    } catch (error) {
+      setCancellationError(
+        error.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : error.message
+      );
+    } finally {
+      setSavingCancellation(false);
+    }
+  };
+
+  const openAttendanceForm = () => {
+    setAttendanceFormOpen(true);
+    setAttendanceAssignmentId("");
+    setAttendanceFormStatus("Present");
+    setAttendanceFormMessage("");
+    setAttendanceFeedback("");
+  };
+
+  const openAttendanceCorrection = (record) => {
+    setAttendanceEditing(record);
+    setAttendanceCorrectionStatus(record.Attendance_Status || "Present");
+    setAttendanceCorrectionMessage("");
+    setAttendanceFeedback("");
+  };
+
+  const handleRecordAttendance = async (event) => {
+    event.preventDefault();
+    if (savingAttendance || attendanceRecordLock.current) return;
+
+    const formData = new FormData(event.currentTarget);
+    const payload = {
+      Assignment_ID: String(formData.get("Assignment_ID") || "").trim(),
+      Attendance_Status: String(formData.get("Attendance_Status") || "").trim(),
+      Recorded_By: String(formData.get("Recorded_By") || "").trim(),
+      Check_In_DateTime: String(formData.get("Check_In_DateTime") || "").trim(),
+      Check_Out_DateTime: String(formData.get("Check_Out_DateTime") || "").trim(),
+      Notes: String(formData.get("Notes") || "").trim() || null,
+    };
+    const needsTimes = !["Absent", "On Leave"].includes(payload.Attendance_Status);
+
+    if (!payload.Assignment_ID || !payload.Attendance_Status || !payload.Recorded_By) {
+      setAttendanceFormMessage(
+        "Choose a duty assignment and attendance status, and enter Recorded By."
+      );
+      return;
+    }
+    if (!eligibleAttendanceAssignments.some(
+      (assignment) => assignment.Assignment_ID === payload.Assignment_ID
+    )) {
+      setAttendanceFormMessage(
+        "This assignment already has attendance or is cancelled. Refresh the list and choose another assignment."
+      );
+      return;
+    }
+    if (needsTimes && !payload.Check_In_DateTime) {
+      setAttendanceFormMessage(
+        "A check-in time is required for Present, Late, and Half-day attendance."
+      );
+      return;
+    }
+
+    const assignment = attendanceAssignmentById.get(
+      payload.Assignment_ID.toLowerCase()
+    );
+    if (!window.confirm(
+      `Record ${payload.Attendance_Status} attendance for assignment ${payload.Assignment_ID} on ${formatRosterDate(assignment?.Duty_Date)}?`
+    )) return;
+
+    payload.Check_In_DateTime = needsTimes
+      ? payload.Check_In_DateTime || null
+      : null;
+    payload.Check_Out_DateTime = needsTimes
+      ? payload.Check_Out_DateTime || null
+      : null;
+    attendanceRecordLock.current = true;
+    setSavingAttendance(true);
+    setAttendanceFormMessage("");
+    setAttendanceFeedback("");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseErrorMessage(result, "Unable to record attendance.")
+        );
+      }
+
+      setAttendanceFormOpen(false);
+      setAttendanceAssignmentId("");
+      setAttendanceFeedback(
+        `Attendance ${result.Attendance_ID} recorded successfully.`
+      );
+      setAttendanceFeedbackType("success");
+      setAttendanceRefreshKey((current) => current + 1);
+    } catch (error) {
+      setAttendanceFormMessage(
+        error.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : error.message
+      );
+    } finally {
+      attendanceRecordLock.current = false;
+      setSavingAttendance(false);
+    }
+  };
+
+  const handleCorrectAttendance = async (event) => {
+    event.preventDefault();
+    if (
+      !attendanceEditing ||
+      savingAttendanceCorrection ||
+      attendanceCorrectionLock.current
+    ) return;
+
+    const formData = new FormData(event.currentTarget);
+    const status = String(formData.get("Attendance_Status") || "").trim();
+    const recordedBy = String(formData.get("Recorded_By") || "").trim();
+    const correctionReason = String(formData.get("Correction_Reason") || "").trim();
+    const notes = String(formData.get("Notes") || "").trim();
+    const needsTimes = !["Absent", "On Leave"].includes(status);
+    const checkIn = String(formData.get("Check_In_DateTime") || "").trim();
+    const checkOut = String(formData.get("Check_Out_DateTime") || "").trim();
+
+    if (!status || !recordedBy || !correctionReason) {
+      setAttendanceCorrectionMessage(
+        "Attendance status, Recorded By, and Correction Reason are required."
+      );
+      return;
+    }
+    if (needsTimes && !checkIn) {
+      setAttendanceCorrectionMessage(
+        "A check-in time is required for Present, Late, and Half-day attendance."
+      );
+      return;
+    }
+    if (!window.confirm(
+      `Save the attendance correction for ${attendanceEditing.Attendance_ID}?`
+    )) return;
+
+    setSavingAttendanceCorrection(true);
+    setAttendanceCorrectionMessage("");
+    setAttendanceFeedback("");
+    const payload = {
+      Attendance_Status: status,
+      Check_In_DateTime: needsTimes ? checkIn || null : null,
+      Check_Out_DateTime: needsTimes ? checkOut || null : null,
+      Recorded_By: recordedBy,
+      Correction_Reason: correctionReason,
+      Notes: notes || null,
+    };
+    attendanceCorrectionLock.current = true;
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/attendance/${encodeURIComponent(attendanceEditing.Attendance_ID)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          responseErrorMessage(result, "Unable to correct attendance.")
+        );
+      }
+
+      setAttendanceEditing(null);
+      setAttendanceFeedback(
+        `Attendance ${result.Attendance_ID} corrected successfully.`
+      );
+      setAttendanceFeedbackType("success");
+      setAttendanceRefreshKey((current) => current + 1);
+    } catch (error) {
+      setAttendanceCorrectionMessage(
+        error.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : error.message
+      );
+    } finally {
+      attendanceCorrectionLock.current = false;
+      setSavingAttendanceCorrection(false);
+    }
+  };
+
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -723,8 +1421,18 @@ function App() {
             <span className="sidebar-icon">⚕</span> Laboratory
           </button>
 
-          <button className="sidebar-link" disabled>
+          <button
+            className={`sidebar-link ${activePage === "duty-roster" ? "active" : ""}`}
+            onClick={() => setActivePage("duty-roster")}
+          >
             <span className="sidebar-icon">◷</span> Duty Roster
+          </button>
+
+          <button
+            className={`sidebar-link ${activePage === "attendance" ? "active" : ""}`}
+            onClick={() => setActivePage("attendance")}
+          >
+            <span className="sidebar-icon">✓</span> Attendance Management
           </button>
 
           <p className="sidebar-heading">PREFERENCES</p>
@@ -754,6 +1462,10 @@ function App() {
                 ? "Staff Management"
                 : activePage === "shifts"
                   ? "Shift Management"
+                  : activePage === "duty-roster"
+                    ? "Duty Roster"
+                  : activePage === "attendance"
+                    ? "Attendance Management"
                   : "Chat Assistant"}
           </h1>
           <p>
@@ -765,6 +1477,10 @@ function App() {
                 ? "Register, search and update staff records"
                 : activePage === "shifts"
                   ? "Create and update hospital shift definitions"
+                  : activePage === "duty-roster"
+                    ? "Plan, review and cancel staff duty assignments"
+                  : activePage === "attendance"
+                    ? "Record and correct attendance linked to duty assignments"
                   : "Ask questions about hospital information"}
           </p>
         </div>
@@ -1828,6 +2544,972 @@ function App() {
               {shiftRecords.length === 0 && (
                 <div className="patient-empty-state">
                   No shift records available yet.
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      ) : activePage === "duty-roster" ? (
+        <section className="dashboard-page duty-roster-page">
+          <div className="dashboard-heading">
+            <span className="dashboard-tag">HOSPITAL MANAGEMENT</span>
+            <h1>Duty Roster</h1>
+            <p>Review assignments by date, staff member, department, shift and status.</p>
+          </div>
+
+          <div className="patient-toolbar staff-toolbar duty-toolbar">
+            <div className="patient-count" aria-live="polite">
+              Total Assignments: <strong>{dutyAssignments.length}</strong>
+              <span className="staff-result-count">
+                {visibleDutyAssignments.length} shown in this view
+              </span>
+            </div>
+
+            <div className="duty-toolbar-actions">
+              <button
+                type="button"
+                className="staff-secondary-button"
+                onClick={() => setDutyRefreshKey((current) => current + 1)}
+                disabled={dutyLoading}
+              >
+                {dutyLoading ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                type="button"
+                className="add-patient-button"
+                onClick={openDutyAssignmentForm}
+              >
+                + Create Assignment
+              </button>
+            </div>
+          </div>
+
+          {dutyFormMessage && (
+            <div
+              className={
+                dutyFormMessage.includes("successfully") ||
+                dutyFormMessage.includes("was cancelled")
+                  ? "registration-success"
+                  : "registration-error"
+              }
+              role="status"
+            >
+              {dutyFormMessage}
+            </div>
+          )}
+
+          <div className="duty-period-panel">
+            <div className="duty-view-switch" role="group" aria-label="Roster view">
+              {["Daily", "Weekly", "Monthly"].map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={dutyViewMode === mode ? "active" : ""}
+                  onClick={() => setDutyViewMode(mode)}
+                  aria-pressed={dutyViewMode === mode}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+
+            <div className="duty-date-navigation">
+              <button
+                type="button"
+                className="staff-secondary-button"
+                onClick={() => moveDutyView(-1)}
+                aria-label={`Previous ${dutyViewMode.toLowerCase()} period`}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="staff-secondary-button"
+                onClick={() => setDutyViewDate(localDateValue(new Date()))}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                className="staff-secondary-button"
+                onClick={() => moveDutyView(1)}
+                aria-label={`Next ${dutyViewMode.toLowerCase()} period`}
+              >
+                Next
+              </button>
+              <strong className="duty-period-label">
+                {dutyViewRange.start === dutyViewRange.end
+                  ? formatRosterDate(dutyViewRange.start)
+                  : `${formatRosterDate(dutyViewRange.start)} – ${formatRosterDate(dutyViewRange.end)}`}
+              </strong>
+            </div>
+          </div>
+
+          <div className="duty-filter-panel">
+            <label>
+              From date
+              <input
+                type="date"
+                value={dutyDateFromFilter}
+                onChange={(event) => setDutyDateFromFilter(event.target.value)}
+              />
+            </label>
+            <label>
+              To date
+              <input
+                type="date"
+                value={dutyDateToFilter}
+                onChange={(event) => setDutyDateToFilter(event.target.value)}
+              />
+            </label>
+            <label>
+              Staff member
+              <select
+                value={dutyStaffFilter}
+                onChange={(event) => setDutyStaffFilter(event.target.value)}
+              >
+                <option value="">All staff</option>
+                {dutyStaff.map((staffMember) => (
+                  <option key={staffMember.Staff_ID} value={staffMember.Staff_ID}>
+                    {staffMember.Full_Name} ({staffMember.Staff_ID})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Department
+              <select
+                value={dutyDepartmentFilter}
+                onChange={(event) => setDutyDepartmentFilter(event.target.value)}
+              >
+                <option value="">All departments</option>
+                {dutyDepartments.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Shift
+              <select
+                value={dutyShiftFilter}
+                onChange={(event) => setDutyShiftFilter(event.target.value)}
+              >
+                <option value="">All shifts</option>
+                {dutyShifts.map((shift) => (
+                  <option key={shift.Shift_ID} value={shift.Shift_ID}>
+                    {shift.Shift_Name} ({shift.Shift_ID})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Assignment status
+              <select
+                value={dutyStatusFilter}
+                onChange={(event) => setDutyStatusFilter(event.target.value)}
+              >
+                <option value="All">All statuses</option>
+                <option value="Assigned">Assigned</option>
+                <option value="Cancelled">Cancelled</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="staff-secondary-button duty-clear-filters"
+              onClick={() => {
+                setDutyDateFromFilter("");
+                setDutyDateToFilter("");
+                setDutyStaffFilter("");
+                setDutyDepartmentFilter("");
+                setDutyShiftFilter("");
+                setDutyStatusFilter("All");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+
+          <p className="duty-reschedule-note">
+            Rescheduling is handled by cancelling the original assignment and creating a replacement.
+            Staff, duty date and shift cannot be edited on an existing assignment.
+          </p>
+
+          {dutyFormOpen && (
+            <div className="patient-form-container duty-form-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>Create Duty Assignment</h2>
+                  <p>Choose active staff and an active shift for the duty date.</p>
+                </div>
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  onClick={() => setDutyFormOpen(false)}
+                  aria-label="Close assignment form"
+                  disabled={savingDutyAssignment}
+                >
+                  ×
+                </button>
+              </div>
+
+              <form
+                key={`new-duty-${dutyViewDate}`}
+                className="patient-form"
+                onSubmit={handleCreateDutyAssignment}
+              >
+                <div className="patient-form-grid">
+                  <label>
+                    Staff member *
+                    <select name="Staff_ID" required defaultValue="">
+                      <option value="" disabled>
+                        Select active staff
+                      </option>
+                      {activeDutyStaff.map((staffMember) => (
+                        <option key={staffMember.Staff_ID} value={staffMember.Staff_ID}>
+                          {staffMember.Full_Name} · {staffMember.Role || "Role not set"}
+                          {staffMember.Department ? ` · ${staffMember.Department}` : ""}
+                          {` · ${staffMember.Staff_ID}`}
+                        </option>
+                      ))}
+                    </select>
+                    {activeDutyStaff.length === 0 && (
+                      <small>No active staff members are available.</small>
+                    )}
+                  </label>
+
+                  <label>
+                    Duty date *
+                    <input
+                      name="Duty_Date"
+                      type="date"
+                      required
+                      defaultValue={dutyViewDate}
+                    />
+                  </label>
+
+                  <label>
+                    Shift *
+                    <select name="Shift_ID" required defaultValue="">
+                      <option value="" disabled>
+                        Select active shift
+                      </option>
+                      {activeDutyShifts.map((shift) => (
+                        <option key={shift.Shift_ID} value={shift.Shift_ID}>
+                          {shift.Shift_Name} · {formatShiftTime(shift.Start_Time)}–
+                          {formatShiftTime(shift.End_Time)}
+                          {shift.Crosses_Midnight === "Yes" ? " (overnight)" : ""}
+                          {` · ${shift.Shift_ID}`}
+                        </option>
+                      ))}
+                    </select>
+                    {activeDutyShifts.length === 0 && (
+                      <small>No active shifts are available.</small>
+                    )}
+                  </label>
+
+                  <label>
+                    Assigned by
+                    <input
+                      name="Assigned_By"
+                      type="text"
+                      maxLength="32767"
+                      placeholder="Optional"
+                    />
+                  </label>
+
+                  <label className="patient-full-width">
+                    Notes
+                    <textarea name="Notes" rows="3" maxLength="32767" />
+                  </label>
+                </div>
+
+                <div className="patient-form-actions">
+                  <button
+                    type="button"
+                    onClick={() => setDutyFormOpen(false)}
+                    disabled={savingDutyAssignment}
+                  >
+                    Close
+                  </button>
+                  <button type="submit" disabled={savingDutyAssignment}>
+                    {savingDutyAssignment ? "Creating..." : "Create Assignment"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {dutyLoading && <p className="staff-loading">Loading duty roster...</p>}
+          {dutyError && (
+            <div className="registration-error" role="alert">
+              <strong>Error:</strong> {dutyError}
+            </div>
+          )}
+          {dutyDateRangeInvalid && (
+            <div className="registration-error" role="alert">
+              The From date must be on or before the To date.
+            </div>
+          )}
+
+          {!dutyLoading && !dutyError && (
+            <div className="patient-table-container duty-table-wrap">
+              <table className="patient-table staff-table duty-roster-table">
+                <thead>
+                  <tr>
+                    <th>Assignment ID</th>
+                    <th>Staff member</th>
+                    <th>Department</th>
+                    <th>Duty date</th>
+                    <th>Shift</th>
+                    <th>Shift time</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!dutyDateRangeInvalid && visibleDutyAssignments.map((assignment) => {
+                    const staffMember = dutyStaffById.get(
+                      String(assignment.Staff_ID || "").toLowerCase()
+                    );
+                    const shift = dutyShiftById.get(
+                      String(assignment.Shift_ID || "").toLowerCase()
+                    );
+                    const statusClass = String(
+                      assignment.Assignment_Status || "unknown"
+                    )
+                      .toLowerCase()
+                      .replaceAll(" ", "-");
+
+                    return (
+                      <tr key={assignment.Assignment_ID}>
+                        <td><strong>{assignment.Assignment_ID}</strong></td>
+                        <td>
+                          {staffMember?.Full_Name || "Unknown staff"}
+                          <small>{assignment.Staff_ID}</small>
+                        </td>
+                        <td>{staffMember?.Department || "—"}</td>
+                        <td>{formatRosterDate(assignment.Duty_Date)}</td>
+                        <td>
+                          {shift?.Shift_Name || "Unknown shift"}
+                          <small>{assignment.Shift_ID}</small>
+                        </td>
+                        <td>
+                          {shift
+                            ? `${formatShiftTime(shift.Start_Time)}–${formatShiftTime(shift.End_Time)}${shift.Crosses_Midnight === "Yes" ? " (+1 day)" : ""}`
+                            : "—"}
+                        </td>
+                        <td>
+                          <span className={`staff-status-badge duty-status-badge status-${statusClass}`}>
+                            {assignment.Assignment_Status || "—"}
+                          </span>
+                        </td>
+                        <td>
+                          {assignment.Assignment_Status === "Assigned" ? (
+                            <button
+                              type="button"
+                              className="duty-cancel-button"
+                              onClick={() => openCancellationForm(assignment)}
+                              aria-label={`Cancel assignment ${assignment.Assignment_ID}`}
+                            >
+                              Cancel
+                            </button>
+                          ) : (
+                            <span className="duty-no-action">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {visibleDutyAssignments.length === 0 && (
+                <div className="patient-empty-state">
+                  {dutyAssignments.length === 0
+                    ? "No duty assignments are available yet."
+                    : "No assignments match this date range and filter selection."}
+                </div>
+              )}
+            </div>
+          )}
+
+          {cancellationAssignment && (
+            <div className="duty-modal-backdrop">
+              <div
+                className="duty-cancel-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="duty-cancel-title"
+              >
+                <div className="duty-cancel-modal-heading">
+                  <div>
+                    <span className="dashboard-tag">DUTY ROSTER</span>
+                    <h2 id="duty-cancel-title">
+                      {cancellationReviewOpen ? "Confirm cancellation" : "Cancel assignment"}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    className="patient-form-close"
+                    onClick={closeCancellationForm}
+                    disabled={savingCancellation}
+                    aria-label="Close cancellation dialog"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {!cancellationReviewOpen ? (
+                  <form onSubmit={reviewCancellation}>
+                    <p className="duty-cancel-assignment-summary">
+                      {cancellationAssignment.Assignment_ID} · {cancellationAssignment.Staff_ID} · {formatRosterDate(cancellationAssignment.Duty_Date)}
+                    </p>
+                    <label>
+                      Cancelled by *
+                      <input
+                        type="text"
+                        maxLength="32767"
+                        required
+                        value={cancellationActor}
+                        onChange={(event) => setCancellationActor(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Cancellation reason *
+                      <textarea
+                        rows="3"
+                        maxLength="32767"
+                        required
+                        value={cancellationReason}
+                        onChange={(event) => setCancellationReason(event.target.value)}
+                      />
+                    </label>
+                    {cancellationError && (
+                      <div className="registration-error" role="alert">
+                        {cancellationError}
+                      </div>
+                    )}
+                    <div className="patient-form-actions">
+                      <button type="button" onClick={closeCancellationForm}>
+                        Keep Assignment
+                      </button>
+                      <button type="submit">Review Cancellation</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="duty-cancel-review">
+                    <p>
+                      Cancel <strong>{cancellationAssignment.Assignment_ID}</strong> for{" "}
+                      {cancellationAssignment.Staff_ID} on {formatRosterDate(cancellationAssignment.Duty_Date)}?
+                    </p>
+                    <dl>
+                      <dt>Cancelled by</dt>
+                      <dd>{cancellationActor.trim()}</dd>
+                      <dt>Reason</dt>
+                      <dd>{cancellationReason.trim()}</dd>
+                    </dl>
+                    <p className="duty-cancel-warning">
+                      The assignment will remain in the roster as Cancelled. This cannot be undone here.
+                    </p>
+                    {cancellationError && (
+                      <div className="registration-error" role="alert">
+                        {cancellationError}
+                      </div>
+                    )}
+                    <div className="patient-form-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCancellationReviewOpen(false);
+                          setCancellationError("");
+                        }}
+                        disabled={savingCancellation}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={confirmDutyCancellation}
+                        disabled={savingCancellation}
+                      >
+                        {savingCancellation ? "Cancelling..." : "Confirm Cancellation"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      ) : activePage === "attendance" ? (
+        <section className="dashboard-page attendance-page">
+          <div className="dashboard-heading">
+            <span className="dashboard-tag">STAFF OPERATIONS</span>
+            <h1>Attendance Management</h1>
+            <p>Record, review and correct attendance linked to duty assignments.</p>
+          </div>
+
+          <div className="patient-toolbar staff-toolbar attendance-toolbar">
+            <div className="attendance-count-total">
+              Total Attendance: <strong>{attendanceRecords.length}</strong>
+            </div>
+            <div className="attendance-toolbar-actions">
+              <button
+                type="button"
+                className="staff-secondary-button"
+                onClick={() => setAttendanceRefreshKey((current) => current + 1)}
+                disabled={attendanceLoading}
+              >
+                {attendanceLoading ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                type="button"
+                className="add-patient-button"
+                onClick={openAttendanceForm}
+                disabled={attendanceLoading || Boolean(attendanceError)}
+              >
+                + Record Attendance
+              </button>
+            </div>
+          </div>
+
+          <div className="attendance-status-counts" aria-label="Attendance totals by status">
+            {[
+              ["Present", "present"],
+              ["Late", "late"],
+              ["Absent", "absent"],
+              ["Half-day", "half-day"],
+              ["On Leave", "on-leave"],
+            ].map(([status, className]) => (
+              <div className={`attendance-count-card status-${className}`} key={status}>
+                <span>{status}</span>
+                <strong>{attendanceStatusCounts[status]}</strong>
+              </div>
+            ))}
+          </div>
+
+          {attendanceFeedback && (
+            <div
+              className={`attendance-feedback ${attendanceFeedbackType === "error" ? "is-error" : "is-success"}`}
+              role={attendanceFeedbackType === "error" ? "alert" : "status"}
+            >
+              {attendanceFeedback}
+            </div>
+          )}
+
+          <div className="attendance-filter-panel">
+            <label>
+              From date
+              <input
+                type="date"
+                value={attendanceDateFromFilter}
+                onChange={(event) => setAttendanceDateFromFilter(event.target.value)}
+              />
+            </label>
+            <label>
+              To date
+              <input
+                type="date"
+                value={attendanceDateToFilter}
+                onChange={(event) => setAttendanceDateToFilter(event.target.value)}
+              />
+            </label>
+            <label>
+              Staff member
+              <select
+                value={attendanceStaffFilter}
+                onChange={(event) => setAttendanceStaffFilter(event.target.value)}
+              >
+                <option value="">All staff</option>
+                {attendanceStaff.map((staffMember) => (
+                  <option key={staffMember.Staff_ID} value={staffMember.Staff_ID}>
+                    {staffMember.Full_Name} · {staffMember.Staff_ID}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Department
+              <select
+                value={attendanceDepartmentFilter}
+                onChange={(event) => setAttendanceDepartmentFilter(event.target.value)}
+              >
+                <option value="">All departments</option>
+                {attendanceDepartments.map((department) => (
+                  <option key={department} value={department}>{department}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Shift
+              <select
+                value={attendanceShiftFilter}
+                onChange={(event) => setAttendanceShiftFilter(event.target.value)}
+              >
+                <option value="">All shifts</option>
+                {attendanceShifts.map((shift) => (
+                  <option key={shift.Shift_ID} value={shift.Shift_ID}>
+                    {shift.Shift_Name} · {shift.Shift_ID}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Attendance status
+              <select
+                value={attendanceStatusFilter}
+                onChange={(event) => setAttendanceStatusFilter(event.target.value)}
+              >
+                <option value="All">All statuses</option>
+                <option value="Present">Present</option>
+                <option value="Late">Late</option>
+                <option value="Absent">Absent</option>
+                <option value="Half-day">Half-day</option>
+                <option value="On Leave">On Leave</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="staff-secondary-button attendance-clear-filters"
+              onClick={() => {
+                setAttendanceDateFromFilter("");
+                setAttendanceDateToFilter("");
+                setAttendanceStaffFilter("");
+                setAttendanceDepartmentFilter("");
+                setAttendanceShiftFilter("");
+                setAttendanceStatusFilter("All");
+              }}
+            >
+              Clear filters
+            </button>
+          </div>
+
+          {attendanceDateRangeInvalid && (
+            <div className="registration-error" role="alert">
+              The From date must be on or before the To date.
+            </div>
+          )}
+
+          {attendanceFormOpen && (
+            <div className="patient-form-container attendance-form-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>Record Attendance</h2>
+                  <p>Select an existing non-cancelled duty assignment.</p>
+                </div>
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  onClick={() => setAttendanceFormOpen(false)}
+                  disabled={savingAttendance}
+                  aria-label="Close attendance form"
+                >
+                  ×
+                </button>
+              </div>
+
+              <form className="patient-form" onSubmit={handleRecordAttendance}>
+                <div className="patient-form-grid">
+                  <label className="patient-full-width">
+                    Duty assignment *
+                    <select
+                      name="Assignment_ID"
+                      required
+                      value={attendanceAssignmentId}
+                      onChange={(event) => setAttendanceAssignmentId(event.target.value)}
+                    >
+                      <option value="" disabled>Select an eligible assignment</option>
+                      {eligibleAttendanceAssignments.map((assignment) => {
+                        const staffMember = attendanceStaffById.get(
+                          String(assignment.Staff_ID || "").toLowerCase()
+                        );
+                        const shift = attendanceShiftById.get(
+                          String(assignment.Shift_ID || "").toLowerCase()
+                        );
+                        return (
+                          <option
+                            key={assignment.Assignment_ID}
+                            value={assignment.Assignment_ID}
+                          >
+                            {staffMember?.Full_Name || assignment.Staff_ID}
+                            {staffMember?.Department ? ` · ${staffMember.Department}` : ""}
+                            {` · ${formatRosterDate(assignment.Duty_Date)}`}
+                            {` · ${shift?.Shift_Name || assignment.Shift_ID}`}
+                            {` · ${assignment.Assignment_ID}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {eligibleAttendanceAssignments.length === 0 && (
+                      <small>No non-cancelled assignments without attendance are available.</small>
+                    )}
+                  </label>
+
+                  {selectedAttendanceAssignment && (
+                    <div className="attendance-assignment-summary patient-full-width">
+                      <strong>{selectedAttendanceStaff?.Full_Name || selectedAttendanceAssignment.Staff_ID}</strong>
+                      <span>{selectedAttendanceStaff?.Department || "Department not set"}</span>
+                      <span>{formatRosterDate(selectedAttendanceAssignment.Duty_Date)}</span>
+                      <span>
+                        {selectedAttendanceShift?.Shift_Name || selectedAttendanceAssignment.Shift_ID}
+                        {selectedAttendanceShift
+                          ? ` · ${formatShiftTime(selectedAttendanceShift.Start_Time)}–${formatShiftTime(selectedAttendanceShift.End_Time)}${selectedAttendanceShift.Crosses_Midnight === "Yes" ? " (ends next day)" : ""}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
+
+                  <label>
+                    Attendance status *
+                    <select
+                      name="Attendance_Status"
+                      required
+                      value={attendanceFormStatus}
+                      onChange={(event) => setAttendanceFormStatus(event.target.value)}
+                    >
+                      <option value="Present">Present</option>
+                      <option value="Late">Late</option>
+                      <option value="Absent">Absent</option>
+                      <option value="Half-day">Half-day</option>
+                      <option value="On Leave">On Leave</option>
+                    </select>
+                  </label>
+
+                  {!['Absent', 'On Leave'].includes(attendanceFormStatus) && (
+                    <>
+                      <label>
+                        Check-in *
+                        <input name="Check_In_DateTime" type="datetime-local" step="1" required />
+                      </label>
+                      <label>
+                        Check-out
+                        <input name="Check_Out_DateTime" type="datetime-local" step="1" />
+                      </label>
+                    </>
+                  )}
+
+                  <label>
+                    Recorded by *
+                    <input name="Recorded_By" type="text" maxLength="32767" required />
+                  </label>
+                  <label className="patient-full-width">
+                    Notes
+                    <textarea name="Notes" rows="3" maxLength="32767" />
+                  </label>
+                </div>
+
+                <p className="attendance-rule-note">
+                  Status is recorded as selected; it is not calculated automatically. Backend rules enforce the five-minute Present/Late boundary, shift times, and overnight limits. Absent and On Leave entries do not accept timestamps.
+                </p>
+                {attendanceFormMessage && (
+                  <div className="registration-error" role="alert">{attendanceFormMessage}</div>
+                )}
+                <div className="patient-form-actions">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceFormOpen(false)}
+                    disabled={savingAttendance}
+                  >
+                    Close
+                  </button>
+                  <button type="submit" disabled={savingAttendance || eligibleAttendanceAssignments.length === 0}>
+                    {savingAttendance ? "Recording..." : "Record Attendance"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {attendanceEditing && (
+            <div className="patient-form-container attendance-form-container attendance-correction-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>Correct Attendance</h2>
+                  <p>Attendance ID and Assignment ID remain unchanged.</p>
+                </div>
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  onClick={() => setAttendanceEditing(null)}
+                  disabled={savingAttendanceCorrection}
+                  aria-label="Close attendance correction form"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="attendance-immutable-summary">
+                <span><strong>Attendance:</strong> {attendanceEditing.Attendance_ID}</span>
+                <span><strong>Assignment:</strong> {attendanceEditing.Assignment_ID}</span>
+              </div>
+              <form className="patient-form" onSubmit={handleCorrectAttendance}>
+                <div className="patient-form-grid">
+                  <label>
+                    Attendance status *
+                    <select
+                      name="Attendance_Status"
+                      required
+                      value={attendanceCorrectionStatus}
+                      onChange={(event) => setAttendanceCorrectionStatus(event.target.value)}
+                    >
+                      <option value="Present">Present</option>
+                      <option value="Late">Late</option>
+                      <option value="Absent">Absent</option>
+                      <option value="Half-day">Half-day</option>
+                      <option value="On Leave">On Leave</option>
+                    </select>
+                  </label>
+                  {!['Absent', 'On Leave'].includes(attendanceCorrectionStatus) && (
+                    <>
+                      <label>
+                        Check-in *
+                        <input
+                          name="Check_In_DateTime"
+                          type="datetime-local"
+                          step="1"
+                          defaultValue={formatDateTimeInput(attendanceEditing.Check_In_DateTime)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        Check-out
+                        <input
+                          name="Check_Out_DateTime"
+                          type="datetime-local"
+                          step="1"
+                          defaultValue={formatDateTimeInput(attendanceEditing.Check_Out_DateTime)}
+                        />
+                      </label>
+                    </>
+                  )}
+                  <label>
+                    Recorded by *
+                    <input name="Recorded_By" type="text" maxLength="32767" required />
+                  </label>
+                  <label>
+                    Correction reason *
+                    <input name="Correction_Reason" type="text" maxLength="32767" required />
+                  </label>
+                  <label className="patient-full-width">
+                    Notes
+                    <textarea
+                      name="Notes"
+                      rows="3"
+                      maxLength="32767"
+                      defaultValue={attendanceEditing.Notes || ""}
+                    />
+                  </label>
+                </div>
+                <p className="attendance-audit-note">
+                  The backend stores only the latest correction actor and reason. Earlier correction metadata is not retained.
+                </p>
+                {attendanceCorrectionMessage && (
+                  <div className="registration-error" role="alert">{attendanceCorrectionMessage}</div>
+                )}
+                <div className="patient-form-actions">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceEditing(null)}
+                    disabled={savingAttendanceCorrection}
+                  >
+                    Close
+                  </button>
+                  <button type="submit" disabled={savingAttendanceCorrection}>
+                    {savingAttendanceCorrection ? "Saving correction..." : "Save Correction"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {attendanceLoading && <p className="staff-loading">Loading attendance records...</p>}
+          {attendanceError && (
+            <div className="registration-error" role="alert">
+              <strong>Error:</strong> {attendanceError}
+            </div>
+          )}
+
+          {!attendanceLoading && !attendanceError && (
+            <div className="patient-table-container attendance-table-wrap">
+              <table className="patient-table staff-table attendance-table">
+                <thead>
+                  <tr>
+                    <th>Attendance ID</th>
+                    <th>Staff member</th>
+                    <th>Department</th>
+                    <th>Duty date</th>
+                    <th>Shift</th>
+                    <th>Check-in</th>
+                    <th>Check-out</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!attendanceDateRangeInvalid && visibleAttendanceRecords.map((record) => {
+                    const staffMember = attendanceStaffById.get(
+                      String(record.Staff_ID || "").toLowerCase()
+                    );
+                    const assignment = attendanceAssignmentById.get(
+                      String(record.Assignment_ID || "").toLowerCase()
+                    );
+                    const shift = assignment
+                      ? attendanceShiftById.get(String(assignment.Shift_ID || "").toLowerCase())
+                      : null;
+                    const statusClass = String(record.Attendance_Status || "unknown")
+                      .toLowerCase()
+                      .replaceAll(" ", "-");
+
+                    return (
+                      <tr key={record.Attendance_ID}>
+                        <td><strong>{record.Attendance_ID}</strong></td>
+                        <td>
+                          {staffMember?.Full_Name || record.Staff_ID || "Unknown staff"}
+                          <small>{record.Staff_ID}</small>
+                        </td>
+                        <td>{staffMember?.Department || "—"}</td>
+                        <td>{formatRosterDate(record.Duty_Date)}</td>
+                        <td>
+                          {shift?.Shift_Name || assignment?.Shift_ID || "Unknown shift"}
+                          <small>{assignment?.Assignment_ID || record.Assignment_ID}</small>
+                          {shift && (
+                            <small>
+                              {formatShiftTime(shift.Start_Time)}–{formatShiftTime(shift.End_Time)}
+                              {shift.Crosses_Midnight === "Yes" ? " (+1 day)" : ""}
+                            </small>
+                          )}
+                        </td>
+                        <td>{formatAttendanceDateTime(record.Check_In_DateTime)}</td>
+                        <td>{formatAttendanceDateTime(record.Check_Out_DateTime)}</td>
+                        <td>
+                          <span className={`staff-status-badge attendance-status-badge status-${statusClass}`}>
+                            {record.Attendance_Status || "—"}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="staff-edit-button"
+                            onClick={() => openAttendanceCorrection(record)}
+                            aria-label={`Correct attendance ${record.Attendance_ID}`}
+                          >
+                            Correct
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {visibleAttendanceRecords.length === 0 && (
+                <div className="patient-empty-state">
+                  {attendanceRecords.length === 0
+                    ? "No attendance records are available yet."
+                    : "No attendance records match the selected filters."}
                 </div>
               )}
             </div>
