@@ -1702,3 +1702,36 @@ button:focus-visible {
     margin: 4px 0 0;
   }
 }
+
+/* SHIFT MANAGEMENT */
+
+.shift-table {
+  min-width: 1080px;
+}
+
+.shift-table td {
+  vertical-align: middle;
+}
+
+.shift-description-cell {
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.shift-form-container {
+  margin-top: 20px;
+}
+
+.shift-schedule-note {
+  margin: 18px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .shift-toolbar {
+    align-items: stretch;
+  }
+}

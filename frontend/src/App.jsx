@@ -30,6 +30,14 @@ function App() {
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [savingStaff, setSavingStaff] = useState(false);
   const [staffFormMessage, setStaffFormMessage] = useState("");
+  const [shiftRecords, setShiftRecords] = useState([]);
+  const [shiftLoading, setShiftLoading] = useState(false);
+  const [shiftError, setShiftError] = useState("");
+  const [shiftRefreshKey, setShiftRefreshKey] = useState(0);
+  const [shiftFormOpen, setShiftFormOpen] = useState(false);
+  const [selectedShift, setSelectedShift] = useState(null);
+  const [savingShift, setSavingShift] = useState(false);
+  const [shiftFormMessage, setShiftFormMessage] = useState("");
 
   const handleViewPatient = async (patientId) => {
     setPatientDetailsLoading(true);
@@ -361,6 +369,50 @@ function App() {
     };
   }, [activePage, staffSearch, staffRefreshKey]);
 
+  useEffect(() => {
+    if (activePage !== "shifts") return;
+
+    const controller = new AbortController();
+
+    const fetchShifts = async () => {
+      setShiftLoading(true);
+      setShiftError("");
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/shifts", {
+          signal: controller.signal,
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const detail = Array.isArray(result.detail)
+            ? result.detail.map((item) => item.msg).join(", ")
+            : result.detail;
+          throw new Error(detail || "Failed to retrieve shift records.");
+        }
+
+        if (!Array.isArray(result)) {
+          throw new Error("The backend returned an invalid shift list.");
+        }
+
+        setShiftRecords(result);
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        setShiftError(
+          err.message === "Failed to fetch"
+            ? "Cannot connect to the backend. Check whether FastAPI is running."
+            : err.message
+        );
+      } finally {
+        if (!controller.signal.aborted) setShiftLoading(false);
+      }
+    };
+
+    fetchShifts();
+
+    return () => controller.abort();
+  }, [activePage, shiftRefreshKey]);
+
   const handleSaveStaff = async (event) => {
     event.preventDefault();
 
@@ -439,6 +491,123 @@ function App() {
     setSelectedStaff(null);
     setStaffFormMessage("");
   };
+
+  const handleSaveShift = async (event) => {
+    event.preventDefault();
+
+    const formData = new FormData(event.currentTarget);
+    const shiftData = Object.fromEntries(
+      [...formData.entries()].map(([key, value]) => [key, value.trim()])
+    );
+
+    if (!shiftData.Shift_Name) {
+      setShiftFormMessage("Shift Name is required.");
+      return;
+    }
+
+    if (!shiftData.Start_Time || !shiftData.End_Time) {
+      setShiftFormMessage("Start Time and End Time are required.");
+      return;
+    }
+
+    if (shiftData.Start_Time === shiftData.End_Time) {
+      setShiftFormMessage("Start Time and End Time must be different.");
+      return;
+    }
+
+    if (
+      shiftData.Crosses_Midnight === "Yes" &&
+      shiftData.End_Time >= shiftData.Start_Time
+    ) {
+      setShiftFormMessage(
+        "For an overnight shift, End Time must be earlier than Start Time."
+      );
+      return;
+    }
+
+    if (
+      shiftData.Crosses_Midnight === "No" &&
+      shiftData.End_Time <= shiftData.Start_Time
+    ) {
+      setShiftFormMessage(
+        "For a shift that does not cross midnight, End Time must be later than Start Time."
+      );
+      return;
+    }
+
+    shiftData.Description = shiftData.Description || null;
+    shiftData.Shift_Status = shiftData.Shift_Status || "Active";
+
+    setSavingShift(true);
+    setShiftFormMessage("");
+
+    const isEditing = Boolean(selectedShift);
+    const endpoint = isEditing
+      ? `http://127.0.0.1:8000/shifts/${encodeURIComponent(selectedShift.Shift_ID)}`
+      : "http://127.0.0.1:8000/shifts";
+
+    try {
+      const response = await fetch(endpoint, {
+        method: isEditing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(shiftData),
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const detail = Array.isArray(result.detail)
+          ? result.detail.map((item) => item.msg).join(", ")
+          : result.detail;
+        throw new Error(detail || "Unable to save shift details.");
+      }
+
+      setShiftFormOpen(false);
+      setSelectedShift(null);
+      setShiftFormMessage(
+        isEditing
+          ? `Shift ${result.Shift_ID} updated successfully.`
+          : `Shift created successfully. Shift ID: ${result.Shift_ID}`
+      );
+      setShiftRefreshKey((current) => current + 1);
+    } catch (err) {
+      setShiftFormMessage(
+        err.message === "Failed to fetch"
+          ? "Cannot connect to the backend. Check whether FastAPI is running."
+          : err.message
+      );
+    } finally {
+      setSavingShift(false);
+    }
+  };
+
+  const openNewShiftForm = () => {
+    setSelectedShift(null);
+    setShiftFormMessage("");
+    setShiftFormOpen(true);
+  };
+
+  const openEditShiftForm = (shift) => {
+    setSelectedShift(shift);
+    setShiftFormMessage("");
+    setShiftFormOpen(true);
+  };
+
+  const closeShiftForm = () => {
+    setShiftFormOpen(false);
+    setSelectedShift(null);
+    setShiftFormMessage("");
+  };
+
+  const formatShiftTime = (value) => {
+    if (!value) return "—";
+    const [hours, minutes, seconds] = String(value).split(":");
+    return seconds && seconds !== "00"
+      ? `${hours}:${minutes}:${seconds}`
+      : `${hours}:${minutes}`;
+  };
+
+  const formatShiftTimeInput = (value) =>
+    value ? String(value).slice(0, 8) : "";
 
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -539,6 +708,13 @@ function App() {
             <span className="sidebar-icon">♟</span> Staff Management
           </button>
 
+          <button
+            className={`sidebar-link ${activePage === "shifts" ? "active" : ""}`}
+            onClick={() => setActivePage("shifts")}
+          >
+            <span className="sidebar-icon">◷</span> Shift Management
+          </button>
+
           <button className="sidebar-link" disabled>
             <span className="sidebar-icon">▣</span> Appointments
           </button>
@@ -574,8 +750,10 @@ function App() {
               ? "Dashboard"
               : activePage === "patients"
                 ? "Patient Management"
-                : activePage === "staff"
-                  ? "Staff Management"
+              : activePage === "staff"
+                ? "Staff Management"
+                : activePage === "shifts"
+                  ? "Shift Management"
                   : "Chat Assistant"}
           </h1>
           <p>
@@ -583,8 +761,10 @@ function App() {
               ? "Hospital information and system overview"
               : activePage === "patients"
                 ? "Manage and retrieve patient records"
-                : activePage === "staff"
-                  ? "Register, search and update staff records"
+              : activePage === "staff"
+                ? "Register, search and update staff records"
+                : activePage === "shifts"
+                  ? "Create and update hospital shift definitions"
                   : "Ask questions about hospital information"}
           </p>
         </div>
@@ -1411,6 +1591,243 @@ function App() {
                   {staffSearch.trim()
                     ? "No staff members match your search."
                     : "No staff records available yet."}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      ) : activePage === "shifts" ? (
+        <section className="dashboard-page">
+          <div className="dashboard-heading">
+            <span className="dashboard-tag">HOSPITAL MANAGEMENT</span>
+            <h1>Shift Management</h1>
+            <p>View and manage hospital shift definitions and schedules.</p>
+          </div>
+
+          <div className="patient-toolbar staff-toolbar shift-toolbar">
+            <div className="patient-count" aria-live="polite">
+              Total Shifts: <strong>{shiftRecords.length}</strong>
+            </div>
+
+            <button
+              type="button"
+              className="staff-secondary-button"
+              onClick={() => setShiftRefreshKey((current) => current + 1)}
+              disabled={shiftLoading}
+            >
+              {shiftLoading ? "Refreshing..." : "Refresh"}
+            </button>
+
+            <button
+              type="button"
+              className="add-patient-button"
+              onClick={openNewShiftForm}
+            >
+              + Create Shift
+            </button>
+          </div>
+
+          {shiftFormMessage && (
+            <div
+              className={
+                shiftFormMessage.includes("successfully")
+                  ? "registration-success"
+                  : "registration-error"
+              }
+              role="status"
+            >
+              {shiftFormMessage}
+            </div>
+          )}
+
+          {shiftFormOpen && (
+            <div className="patient-form-container shift-form-container">
+              <div className="patient-form-heading">
+                <div>
+                  <h2>{selectedShift ? "Edit Shift" : "Create Shift"}</h2>
+                  <p>
+                    {selectedShift
+                      ? `Shift ID: ${selectedShift.Shift_ID}`
+                      : "Enter the shift details below."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="patient-form-close"
+                  onClick={closeShiftForm}
+                  aria-label="Close shift form"
+                  disabled={savingShift}
+                >
+                  ×
+                </button>
+              </div>
+
+              <form
+                key={selectedShift?.Shift_ID || "new-shift"}
+                className="patient-form"
+                onSubmit={handleSaveShift}
+              >
+                <div className="patient-form-grid">
+                  {selectedShift && (
+                    <label>
+                      Shift ID
+                      <input value={selectedShift.Shift_ID} readOnly />
+                    </label>
+                  )}
+
+                  <label>
+                    Shift Name *
+                    <input
+                      name="Shift_Name"
+                      type="text"
+                      required
+                      maxLength="32767"
+                      defaultValue={selectedShift?.Shift_Name || ""}
+                    />
+                  </label>
+
+                  <label>
+                    Start Time *
+                    <input
+                      name="Start_Time"
+                      type="time"
+                      step="1"
+                      required
+                      defaultValue={formatShiftTimeInput(selectedShift?.Start_Time)}
+                    />
+                  </label>
+
+                  <label>
+                    End Time *
+                    <input
+                      name="End_Time"
+                      type="time"
+                      step="1"
+                      required
+                      defaultValue={formatShiftTimeInput(selectedShift?.End_Time)}
+                    />
+                  </label>
+
+                  <label>
+                    Crosses Midnight *
+                    <select
+                      name="Crosses_Midnight"
+                      required
+                      defaultValue={selectedShift?.Crosses_Midnight || "No"}
+                    >
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    Shift Status *
+                    <select
+                      name="Shift_Status"
+                      required
+                      defaultValue={selectedShift?.Shift_Status || "Active"}
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </label>
+
+                  <label className="patient-full-width">
+                    Description
+                    <textarea
+                      name="Description"
+                      rows="3"
+                      maxLength="32767"
+                      defaultValue={selectedShift?.Description || ""}
+                    />
+                  </label>
+                </div>
+
+                {selectedShift && (
+                  <p className="shift-schedule-note">
+                    If this shift has assignments, the backend will reject changes to its times or midnight setting.
+                  </p>
+                )}
+
+                <div className="patient-form-actions">
+                  <button
+                    type="button"
+                    onClick={closeShiftForm}
+                    disabled={savingShift}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={savingShift}>
+                    {savingShift
+                      ? "Saving..."
+                      : selectedShift
+                        ? "Save Changes"
+                        : "Create Shift"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {shiftLoading && <p className="staff-loading">Loading shifts...</p>}
+
+          {shiftError && (
+            <div className="registration-error" role="alert">
+              <strong>Error:</strong> {shiftError}
+            </div>
+          )}
+
+          {!shiftLoading && !shiftError && (
+            <div className="patient-table-container">
+              <table className="patient-table shift-table">
+                <thead>
+                  <tr>
+                    <th>Shift ID</th>
+                    <th>Shift Name</th>
+                    <th>Start Time</th>
+                    <th>End Time</th>
+                    <th>Crosses Midnight</th>
+                    <th>Description</th>
+                    <th>Shift Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shiftRecords.map((shift) => (
+                    <tr key={shift.Shift_ID}>
+                      <td><strong>{shift.Shift_ID}</strong></td>
+                      <td>{shift.Shift_Name || "—"}</td>
+                      <td>{formatShiftTime(shift.Start_Time)}</td>
+                      <td>{formatShiftTime(shift.End_Time)}</td>
+                      <td>{shift.Crosses_Midnight || "—"}</td>
+                      <td className="shift-description-cell">
+                        {shift.Description || "—"}
+                      </td>
+                      <td>
+                        <span
+                          className={`staff-status-badge status-${String(shift.Shift_Status || "unknown").toLowerCase()}`}
+                        >
+                          {shift.Shift_Status || "—"}
+                        </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="staff-edit-button"
+                          onClick={() => openEditShiftForm(shift)}
+                          aria-label={`Edit ${shift.Shift_Name}`}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {shiftRecords.length === 0 && (
+                <div className="patient-empty-state">
+                  No shift records available yet.
                 </div>
               )}
             </div>
